@@ -201,16 +201,87 @@ Use the provided script to generate policies for multiple teams:
 
 ### Policy 1: Sensitive Data Blocker
 
-Detects and blocks common sensitive data patterns:
+Detects and blocks 50+ sensitive data patterns across modern cloud and infrastructure environments:
 
-- **Social Security Numbers:** `XXX-XX-XXXX`
-- **Credit Card Numbers:** 16-digit patterns
-- **API Keys:** Common formats (AWS, GitHub, etc.)
-- **Private Keys:** PEM format detection
-- **Passwords:** Common password field patterns
-- **Email addresses:** PII consideration
+#### Cloud Provider Credentials
+- **AWS:**
+  - Access Keys (AKIA*, ASIA*)
+  - Secret Keys (40-character base64)
+  - Session Tokens (STS temporary credentials)
+- **Azure:**
+  - Client Secrets (34-40 characters)
+  - Storage Account Keys (88-character base64)
+  - Connection Strings (DefaultEndpointsProtocol format)
+- **Google Cloud:**
+  - API Keys (AIza prefix)
+  - Service Account JSON files
+  - Private Keys (PEM format)
+
+#### Version Control Tokens
+- **GitHub:**
+  - Personal Access Tokens (ghp_)
+  - OAuth Tokens (gho_)
+  - App Tokens (ghs_)
+  - Refresh Tokens (ghr_)
+- **GitLab:**
+  - Personal Access Tokens (glpat-)
+  - Runner Registration Tokens
+
+#### HashiCorp Product Tokens
+- Vault Tokens (hvs. prefix)
+- Terraform Cloud Tokens
+- Consul ACL Tokens (UUID format)
+
+#### Container & Kubernetes
+- Kubernetes Service Account Tokens (JWT format)
+- Kubernetes Secret YAML manifests
+- Docker Config with authentication
+- Docker registry passwords
+
+#### Database Connection Strings
+- PostgreSQL (postgres:// or postgresql://)
+- MySQL (mysql://)
+- MongoDB (mongodb:// or mongodb+srv://)
+- Redis (redis://)
+
+#### API Keys & Authentication
+- Generic API Keys (api_key, apikey patterns)
+- Bearer Tokens
+- JWT Tokens (eyJ prefix)
+- OAuth Client Secrets
+- OAuth Refresh Tokens
+
+#### SSH & SSL/TLS
+- SSH Private Keys (RSA, DSA, EC, OpenSSH)
+- SSH Public Keys
+- SSL/TLS Private Keys
+- SSL Certificates with private keys
+- PKCS12 keystores
+
+#### Third-Party Service Tokens
+- **Slack:** Bot tokens, webhooks
+- **Stripe:** Secret keys, restricted keys
+- **Twilio:** Account SIDs, auth tokens
+- **SendGrid:** API keys
+- **Mailgun:** API keys
+- **NPM:** Access tokens
+- **PyPI:** Upload tokens
+
+#### Passwords & Authentication
+- Password fields (password=, passwd=, pwd=)
+- Basic Authentication headers
+- Encryption keys (AES, RSA)
+
+#### Personal Identifiable Information (PII)
+- Social Security Numbers (XXX-XX-XXXX)
+- Credit Card Numbers (16-digit patterns)
+- Email addresses
 
 **Enforcement Level:** `hard-mandatory` (blocks writes, cannot be overridden)
+
+**Detection Method:** Regex pattern matching on KV values during write operations (PUT, CAS)
+
+**False Positives:** Contact your Consul administrator if legitimate data is blocked
 
 ### Policy 2: KV Size Limit
 
