@@ -6,13 +6,13 @@ A comprehensive tutorial for securing Consul Key-Value store access on VMs using
 
 Your organization runs **Consul Enterprise on OpenShift** and needs to provide secure KV store access to VM-based applications. Each team has:
 
-- A unique team identifier (e.g., `AIT-001`, `AIT-002`, etc.)
+- A unique team identifier (e.g., `GRP-001`, `GRP-002`, etc.)
 - A dedicated Consul namespace matching their team ID
-- KV paths scoped to their namespace: `AIT-XXX/`
-- Users in predefined groups: `AIT-XXX` (matching their team ID)
+- KV paths scoped to their namespace: `GRP-XXX/`
+- Users in predefined groups: `GRP-XXX` (matching their team ID)
 
 **Security Requirements:**
-1. **ACL Policies:** Users in `AIT-XXX` group have read/write access only to `AIT-XXX/` KV paths in their namespace
+1. **ACL Policies:** Users in `GRP-XXX` group have read/write access only to `GRP-XXX/` KV paths in their namespace
 2. **Sentinel Policy #1:** Block writes containing sensitive data patterns (SSN, credit cards, API keys, etc.)
 3. **Sentinel Policy #2:** Enforce maximum KV entry size limits
 
@@ -24,17 +24,17 @@ Your organization runs **Consul Enterprise on OpenShift** and needs to provide s
 │                      (on OpenShift)                          │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │                    Namespace: AIT-001                   │ │
+│  │                    Namespace: GRP-001                   │ │
 │  │  ┌──────────────────────────────────────────────────┐  │ │
-│  │  │              KV Store: AIT-001/                   │  │ │
+│  │  │              KV Store: GRP-001/                   │  │ │
 │  │  │  ├── config/                                      │  │ │
 │  │  │  ├── secrets/  ← Sentinel blocks sensitive data  │  │ │
 │  │  │  └── data/     ← Sentinel enforces size limits   │  │ │
 │  │  └──────────────────────────────────────────────────┘  │ │
 │  │                                                          │ │
-│  │  ACL Policy: ait-001-kv-policy                          │ │
-│  │  ├── Read: AIT-001/* in namespace AIT-001              │ │
-│  │  └── Write: AIT-001/* in namespace AIT-001             │ │
+│  │  ACL Policy: GRP-001-kv-policy                          │ │
+│  │  ├── Read: GRP-001/* in namespace GRP-001              │ │
+│  │  └── Write: GRP-001/* in namespace GRP-001             │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
 │  Sentinel Policies (Global):                                │
@@ -46,8 +46,8 @@ Your organization runs **Consul Enterprise on OpenShift** and needs to provide s
                               │
                     ┌─────────┴─────────┐
                     │   VM Applications  │
-                    │   (AIT-001 group)  │
-                    │   Token: ait-001   │
+                    │   (GRP-001 group)  │
+                    │   Token: GRP-001   │
                     └────────────────────┘
 ```
 
@@ -78,20 +78,20 @@ consul acl token read -self
 ## Quick Start (30 minutes)
 
 ```bash
-# 1. Create namespace for team AIT-001
-consul namespace create -name AIT-001 -description "Team AIT-001 namespace"
+# 1. Create namespace for team GRP-001
+consul namespace create -name GRP-001 -description "Team GRP-001 namespace"
 
-# 2. Create ACL policy for AIT-001
+# 2. Create ACL policy for GRP-001
 consul acl policy create \
-  -name ait-001-kv-policy \
-  -namespace AIT-001 \
-  -rules @acl-policies/ait-001-kv-policy.hcl
+  -name GRP-001-kv-policy \
+  -namespace GRP-001 \
+  -rules @acl-policies/GRP-001-kv-policy.hcl
 
-# 3. Create ACL token for AIT-001 users
+# 3. Create ACL token for GRP-001 users
 consul acl token create \
-  -description "AIT-001 team KV access" \
-  -policy-name ait-001-kv-policy \
-  -namespace AIT-001
+  -description "GRP-001 team KV access" \
+  -policy-name GRP-001-kv-policy \
+  -namespace GRP-001
 
 # 4. Deploy Sentinel policies
 consul operator sentinel create \
@@ -105,7 +105,7 @@ consul operator sentinel create \
   -code @sentinel-policies/kv-size-limit.sentinel
 
 # 5. Test the configuration
-./scripts/test-kv-access.sh AIT-001 <token-from-step-3>
+./scripts/test-kv-access.sh GRP-001 <token-from-step-3>
 ```
 
 ## Repository Structure
@@ -115,8 +115,8 @@ consul-kv-security-tutorial/
 ├── README.md                                    # This file
 ├── DEPLOYMENT_GUIDE.md                          # Step-by-step instructions
 ├── acl-policies/                                # ACL policy definitions
-│   ├── ait-001-kv-policy.hcl                   # Example for team AIT-001
-│   ├── ait-002-kv-policy.hcl                   # Example for team AIT-002
+│   ├── GRP-001-kv-policy.hcl                   # Example for team GRP-001
+│   ├── GRP-002-kv-policy.hcl                   # Example for team GRP-002
 │   └── template-kv-policy.hcl                  # Template for new teams
 ├── sentinel-policies/                           # Sentinel policy definitions
 │   ├── sensitive-data-blocker.sentinel         # Blocks sensitive data patterns
@@ -141,14 +141,14 @@ consul-kv-security-tutorial/
 
 ### Layer 1: Namespace Isolation
 Each team gets a dedicated Consul namespace:
-- Namespace name matches team ID: `AIT-001`, `AIT-002`, etc.
+- Namespace name matches team ID: `GRP-001`, `GRP-002`, etc.
 - Provides logical isolation between teams
 - Prevents cross-team access at the namespace level
 
 ### Layer 2: ACL Policies
 Fine-grained access control within namespaces:
-- **Read access:** `key_prefix "AIT-XXX/" { policy = "read" }`
-- **Write access:** `key_prefix "AIT-XXX/" { policy = "write" }`
+- **Read access:** `key_prefix "GRP-XXX/" { policy = "read" }`
+- **Write access:** `key_prefix "GRP-XXX/" { policy = "write" }`
 - **Deny all other paths:** Default deny policy
 
 ### Layer 3: Sentinel Policies
@@ -163,9 +163,9 @@ Governance and compliance enforcement:
 
 ```hcl
 # Template: acl-policies/template-kv-policy.hcl
-namespace "AIT-XXX" {
+namespace "GRP-XXX" {
   # Allow read/write to team's KV prefix
-  key_prefix "AIT-XXX/" {
+  key_prefix "GRP-XXX/" {
     policy = "write"
   }
   
@@ -191,9 +191,9 @@ namespace "AIT-XXX" {
 Use the provided script to generate policies for multiple teams:
 
 ```bash
-# Generate policies for teams AIT-001 through AIT-010
-./scripts/create-team-namespace.sh AIT-001
-./scripts/create-team-namespace.sh AIT-002
+# Generate policies for teams GRP-001 through GRP-010
+./scripts/create-team-namespace.sh GRP-001
+./scripts/create-team-namespace.sh GRP-002
 # ... etc
 ```
 
@@ -228,10 +228,10 @@ Enforces maximum entry size to prevent performance issues:
 
 ```bash
 # Test valid access (should succeed)
-./scripts/test-kv-access.sh AIT-001 <token> write AIT-001/config/app.json '{"setting":"value"}'
+./scripts/test-kv-access.sh GRP-001 <token> write GRP-001/config/app.json '{"setting":"value"}'
 
 # Test invalid access (should fail)
-./scripts/test-kv-access.sh AIT-001 <token> write AIT-002/config/app.json '{"setting":"value"}'
+./scripts/test-kv-access.sh GRP-001 <token> write GRP-002/config/app.json '{"setting":"value"}'
 ```
 
 ### Test Sentinel Policies
@@ -265,13 +265,13 @@ acl {
   default_policy = "deny"
   enable_token_persistence = true
   tokens {
-    agent = "ait-001-token-here"
-    default = "ait-001-token-here"
+    agent = "GRP-001-token-here"
+    default = "GRP-001-token-here"
   }
 }
 
 # Namespace configuration (Enterprise)
-namespace = "AIT-001"
+namespace = "GRP-001"
 ```
 
 ### Application Integration
@@ -280,19 +280,19 @@ Applications on VMs can access KV using:
 
 1. **Consul CLI:**
 ```bash
-export CONSUL_HTTP_TOKEN="ait-001-token"
-export CONSUL_NAMESPACE="AIT-001"
-consul kv put AIT-001/config/app.json @config.json
-consul kv get AIT-001/config/app.json
+export CONSUL_HTTP_TOKEN="GRP-001-token"
+export CONSUL_NAMESPACE="GRP-001"
+consul kv put GRP-001/config/app.json @config.json
+consul kv get GRP-001/config/app.json
 ```
 
 2. **HTTP API:**
 ```bash
-curl -H "X-Consul-Token: ait-001-token" \
-     -H "X-Consul-Namespace: AIT-001" \
+curl -H "X-Consul-Token: GRP-001-token" \
+     -H "X-Consul-Namespace: GRP-001" \
      -X PUT \
      -d @config.json \
-     https://consul.example.com/v1/kv/AIT-001/config/app.json
+     https://consul.example.com/v1/kv/GRP-001/config/app.json
 ```
 
 3. **SDK (Python example):**
@@ -301,15 +301,15 @@ import consul
 
 c = consul.Consul(
     host='consul.example.com',
-    token='ait-001-token',
-    namespace='AIT-001'
+    token='GRP-001-token',
+    namespace='GRP-001'
 )
 
 # Write to KV
-c.kv.put('AIT-001/config/app.json', '{"setting":"value"}')
+c.kv.put('GRP-001/config/app.json', '{"setting":"value"}')
 
 # Read from KV
-index, data = c.kv.get('AIT-001/config/app.json')
+index, data = c.kv.get('GRP-001/config/app.json')
 ```
 
 ## Monitoring and Auditing
@@ -349,10 +349,10 @@ Key metrics to monitor:
 consul acl token read -id <token-id>
 
 # Check policy rules
-consul acl policy read -name ait-001-kv-policy
+consul acl policy read -name GRP-001-kv-policy
 
 # Test token permissions
-consul kv put -token=<token> AIT-001/test "value"
+consul kv put -token=<token> GRP-001/test "value"
 ```
 
 ### Sentinel Policy Blocking Valid Data
@@ -387,7 +387,7 @@ journalctl -u consul -f
 2. **Least Privilege:** Grant minimum necessary permissions
 3. **Audit Logging:** Always enable audit logging in production
 4. **Sentinel Testing:** Test Sentinel policies thoroughly before deployment
-5. **Namespace Naming:** Use consistent naming convention (AIT-XXX)
+5. **Namespace Naming:** Use consistent naming convention (GRP-XXX)
 6. **Documentation:** Document team-specific KV path conventions
 7. **Monitoring:** Set up alerts for policy violations
 8. **Backup:** Regular backups of Consul KV data
