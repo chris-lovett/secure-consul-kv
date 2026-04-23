@@ -1,0 +1,186 @@
+# Sentinel Policy: KV Size Limit
+# Enforces maximum size limits on Consul KV entries to prevent performance issues
+#
+# Enforcement Level: soft-mandatory (can be overridden by admin with proper justification)
+# Scope: All KV write operations across all namespaces
+
+import "kv"
+import "strings"
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+# Maximum sizes (in bytes)
+max_key_size = 512          # 512 bytes for key
+max_value_size = 524288     # 512 KB for value (configurable)
+max_total_size = 524288     # 512 KB total entry size
+
+# Warning thresholds (80% of max)
+warn_value_size = 419430    # ~410 KB
+warn_total_size = 419430    # ~410 KB
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+# Calculate size of a string in bytes
+size_in_bytes = func(str) {
+    return length(str)
+}
+
+# Format bytes to human-readable format
+format_bytes = func(bytes) {
+    if bytes < 1024 {
+        return string(bytes) + " B"
+    } else if bytes < 1048576 {
+        return string(bytes / 1024) + " KB"
+    } else {
+        return string(bytes / 1048576) + " MB"
+    }
+}
+
+# Check if size exceeds limit
+check_size_limit = func(actual, limit, name) {
+    if actual > limit {
+        return {
+            "valid": false,
+            "message": name + " size (" + format_bytes(actual) + ") exceeds limit (" + format_bytes(limit) + ")"
+        }
+    }
+    return {"valid": true, "message": ""}
+}
+
+# Check if size is approaching limit (warning)
+check_size_warning = func(actual, warning_threshold, limit, name) {
+    if actual > warning_threshold and actual <= limit {
+        return {
+            "warning": true,
+            "message": "⚠️  " + name + " size (" + format_bytes(actual) + ") is approaching limit (" + format_bytes(limit) + ")"
+        }
+    }
+    return {"warning": false, "message": ""}
+}
+
+# =============================================================================
+# MAIN POLICY LOGIC
+# =============================================================================
+
+# Get the KV operation details
+operation = kv.operation
+key = kv.key
+value = kv.value
+namespace = kv.namespace else "default"
+partition = kv.partition else "default"
+
+# Only check write operations (put, cas)
+main = rule when operation in ["put", "cas"] {
+    
+    # Calculate sizes
+    key_size = size_in_bytes(key)
+    value_size = size_in_bytes(string(value))
+    total_size = key_size + value_size
+    
+    # Check key size
+    key_check = check_size_limit(key_size, max_key_size, "Key")
+    if not key_check.valid {
+        print("❌ BLOCKED: KV entry exceeds size limits")
+        print("   Key:", key)
+        print("   Namespace:", namespace)
+        print("   Partition:", partition)
+        print("")
+        print("   " + key_check.message)
+        print("   Current key size:", format_bytes(key_size))
+        print("   Maximum key size:", format_bytes(max_key_size))
+        print("")
+        print("   Please use a shorter key name.")
+        return false
+    }
+    
+    # Check value size
+    value_check = check_size_limit(value_size, max_value_size, "Value")
+    if not value_check.valid {
+        print("❌ BLOCKED: KV entry exceeds size limits")
+        print("   Key:", key)
+        print("   Namespace:", namespace)
+        print("   Partition:", partition)
+        print("")
+        print("   " + value_check.message)
+        print("   Current value size:", format_bytes(value_size))
+        print("   Maximum value size:", format_bytes(max_value_size))
+        print("")
+        print("   Recommendations:")
+        print("   1. Split large data into multiple smaller KV entries")
+        print("   2. Store large files in object storage (S3, Azure Blob, etc.)")
+        print("   3. Use compression before storing")
+        print("   4. Reference external data instead of embedding")
+        print("")
+        print("   If you need to store larger values, contact your Consul administrator")
+        print("   to request an exception (soft-mandatory policy can be overridden).")
+        return false
+    }
+    
+    # Check total size
+    total_check = check_size_limit(total_size, max_total_size, "Total entry")
+    if not total_check.valid {
+        print("❌ BLOCKED: KV entry exceeds size limits")
+        print("   Key:", key)
+        print("   Namespace:", namespace)
+        print("   Partition:", partition)
+        print("")
+        print("   " + total_check.message)
+        print("   Current total size:", format_bytes(total_size))
+        print("   Maximum total size:", format_bytes(max_total_size))
+        print("   (Key size:", format_bytes(key_size), "+ Value size:", format_bytes(value_size) + ")")
+        print("")
+        print("   This limit prevents performance degradation of the Consul cluster.")
+        return false
+    }
+    
+    # Check for warnings (approaching limits)
+    value_warning = check_size_warning(value_size, warn_value_size, max_value_size, "Value")
+    if value_warning.warning {
+        print(value_warning.message)
+        print("   Key:", key)
+        print("   Current size:", format_bytes(value_size))
+        print("   Limit:", format_bytes(max_value_size))
+        print("   Consider splitting this data or using external storage.")
+        print("")
+    }
+    
+    total_warning = check_size_warning(total_size, warn_total_size, max_total_size, "Total entry")
+    if total_warning.warning {
+        print(total_warning.message)
+        print("   Key:", key)
+        print("   Current size:", format_bytes(total_size))
+        print("   Limit:", format_bytes(max_total_size))
+        print("")
+    }
+    
+    # All checks passed
+    true
+}
+
+# =============================================================================
+# POLICY METADATA
+# =============================================================================
+
+# This policy enforces the following limits:
+# - Key size: 512 bytes (hard limit)
+# - Value size: 512 KB (configurable, soft limit)
+# - Total entry size: 512 KB (configurable, soft limit)
+#
+# Warnings are issued at 80% of limits to give users advance notice.
+#
+# Rationale:
+# - Large KV entries can cause performance issues in Consul
+# - Raft log replication becomes slower with large entries
+# - Memory usage increases on Consul servers
+# - Backup and restore operations take longer
+#
+# Best Practices:
+# - Keep KV entries small (< 100 KB recommended)
+# - Use external storage for large files
+# - Split large configurations into multiple keys
+# - Use compression for text-based data
+# - Reference external data instead of embedding

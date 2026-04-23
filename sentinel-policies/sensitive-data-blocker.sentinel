@@ -1,0 +1,302 @@
+# Sentinel Policy: Sensitive Data Blocker
+# Blocks KV writes containing sensitive data patterns commonly found in
+# cloud computing and modern infrastructure environments
+#
+# Enforcement Level: hard-mandatory (cannot be overridden)
+# Scope: All KV write operations across all namespaces
+
+import "kv"
+import "strings"
+
+# =============================================================================
+# SENSITIVE DATA PATTERNS
+# =============================================================================
+
+# AWS Credentials
+aws_access_key_pattern = "(?i)(AKIA|ASIA)[0-9A-Z]{16}"
+aws_secret_key_pattern = "(?i)[0-9a-zA-Z/+=]{40}"
+aws_session_token_pattern = "(?i)FwoGZXIvYXdzE[A-Za-z0-9+/=]+"
+
+# Azure Credentials
+azure_client_secret_pattern = "(?i)[0-9a-zA-Z~_-]{34,40}"
+azure_storage_key_pattern = "(?i)[A-Za-z0-9+/=]{88}"
+azure_connection_string_pattern = "(?i)DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[^;]+"
+
+# Google Cloud Credentials
+gcp_api_key_pattern = "(?i)AIza[0-9A-Za-z_-]{35}"
+gcp_service_account_pattern = "(?i)\"type\":\\s*\"service_account\""
+gcp_private_key_pattern = "(?i)-----BEGIN PRIVATE KEY-----"
+
+# GitHub Tokens
+github_pat_pattern = "(?i)ghp_[0-9a-zA-Z]{36}"
+github_oauth_pattern = "(?i)gho_[0-9a-zA-Z]{36}"
+github_app_token_pattern = "(?i)ghs_[0-9a-zA-Z]{36}"
+github_refresh_token_pattern = "(?i)ghr_[0-9a-zA-Z]{36}"
+
+# GitLab Tokens
+gitlab_pat_pattern = "(?i)glpat-[0-9a-zA-Z_-]{20}"
+gitlab_runner_token_pattern = "(?i)GR1348941[0-9a-zA-Z_-]+"
+
+# HashiCorp Tokens
+vault_token_pattern = "(?i)hvs\\.[0-9a-zA-Z]{24,}"
+terraform_cloud_token_pattern = "(?i)[a-zA-Z0-9]{14}\\.[a-zA-Z0-9]{40}"
+consul_token_pattern = "(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+# Kubernetes Secrets
+k8s_service_account_token_pattern = "(?i)eyJhbGciOiJSUzI1NiIsImtpZCI6[A-Za-z0-9_-]+"
+k8s_secret_pattern = "(?i)apiVersion:\\s*v1\\s*kind:\\s*Secret"
+
+# Docker/Container Registry
+docker_config_pattern = "(?i)\"auths\":\\s*\\{[^}]+\\}"
+docker_password_pattern = "(?i)\"password\":\\s*\"[^\"]+\""
+
+# Database Connection Strings
+postgres_connection_pattern = "(?i)postgres(ql)?://[^:]+:[^@]+@"
+mysql_connection_pattern = "(?i)mysql://[^:]+:[^@]+@"
+mongodb_connection_pattern = "(?i)mongodb(\\+srv)?://[^:]+:[^@]+@"
+redis_connection_pattern = "(?i)redis://[^:]*:[^@]+@"
+
+# API Keys and Tokens
+generic_api_key_pattern = "(?i)(api[_-]?key|apikey)\\s*[:=]\\s*['\"]?[0-9a-zA-Z_-]{20,}['\"]?"
+bearer_token_pattern = "(?i)bearer\\s+[0-9a-zA-Z_-]{20,}"
+jwt_token_pattern = "(?i)eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"
+
+# SSH Keys
+ssh_private_key_pattern = "(?i)-----BEGIN (RSA|DSA|EC|OPENSSH) PRIVATE KEY-----"
+ssh_public_key_pattern = "(?i)ssh-(rsa|dss|ed25519|ecdsa)\\s+[A-Za-z0-9+/=]+"
+
+# SSL/TLS Certificates and Keys
+ssl_private_key_pattern = "(?i)-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----"
+ssl_certificate_pattern = "(?i)-----BEGIN CERTIFICATE-----"
+pkcs12_pattern = "(?i)-----BEGIN PKCS12-----"
+
+# OAuth and OIDC
+oauth_client_secret_pattern = "(?i)(client[_-]?secret|clientSecret)\\s*[:=]\\s*['\"]?[0-9a-zA-Z_-]{20,}['\"]?"
+oauth_refresh_token_pattern = "(?i)(refresh[_-]?token|refreshToken)\\s*[:=]\\s*['\"]?[0-9a-zA-Z_-]{20,}['\"]?"
+
+# Slack Tokens
+slack_token_pattern = "(?i)xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[0-9a-zA-Z]{24,}"
+slack_webhook_pattern = "(?i)https://hooks\\.slack\\.com/services/T[0-9A-Z]+/B[0-9A-Z]+/[0-9a-zA-Z]+"
+
+# Stripe Keys
+stripe_secret_key_pattern = "(?i)sk_live_[0-9a-zA-Z]{24,}"
+stripe_restricted_key_pattern = "(?i)rk_live_[0-9a-zA-Z]{24,}"
+
+# Twilio Credentials
+twilio_account_sid_pattern = "(?i)AC[0-9a-f]{32}"
+twilio_auth_token_pattern = "(?i)[0-9a-f]{32}"
+
+# SendGrid API Key
+sendgrid_api_key_pattern = "(?i)SG\\.[0-9a-zA-Z_-]{22}\\.[0-9a-zA-Z_-]{43}"
+
+# Mailgun API Key
+mailgun_api_key_pattern = "(?i)key-[0-9a-zA-Z]{32}"
+
+# NPM Tokens
+npm_token_pattern = "(?i)npm_[0-9a-zA-Z]{36}"
+
+# PyPI Tokens
+pypi_token_pattern = "(?i)pypi-[A-Za-z0-9_-]+"
+
+# Passwords (common patterns)
+password_field_pattern = "(?i)(password|passwd|pwd)\\s*[:=]\\s*['\"]?[^'\"\\s]{8,}['\"]?"
+basic_auth_pattern = "(?i)Authorization:\\s*Basic\\s+[A-Za-z0-9+/=]+"
+
+# Personal Identifiable Information (PII)
+ssn_pattern = "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+credit_card_pattern = "\\b(?:\\d{4}[- ]?){3}\\d{4}\\b"
+email_pattern = "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+
+# Encryption Keys
+aes_key_pattern = "(?i)[0-9a-fA-F]{32,64}"
+rsa_modulus_pattern = "(?i)Modulus:\\s*[0-9a-fA-F:]{100,}"
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+# Check if value contains any sensitive pattern
+contains_sensitive_data = func(value) {
+    # Convert value to string for pattern matching
+    value_str = string(value)
+    
+    # AWS Credentials
+    if value_str matches aws_access_key_pattern {
+        return {"match": true, "type": "AWS Access Key"}
+    }
+    if value_str matches aws_secret_key_pattern and strings.has_prefix(value_str, "aws") {
+        return {"match": true, "type": "AWS Secret Key"}
+    }
+    if value_str matches aws_session_token_pattern {
+        return {"match": true, "type": "AWS Session Token"}
+    }
+    
+    # Azure Credentials
+    if value_str matches azure_connection_string_pattern {
+        return {"match": true, "type": "Azure Connection String"}
+    }
+    if value_str matches azure_storage_key_pattern {
+        return {"match": true, "type": "Azure Storage Key"}
+    }
+    
+    # Google Cloud
+    if value_str matches gcp_api_key_pattern {
+        return {"match": true, "type": "Google Cloud API Key"}
+    }
+    if value_str matches gcp_service_account_pattern {
+        return {"match": true, "type": "GCP Service Account JSON"}
+    }
+    if value_str matches gcp_private_key_pattern {
+        return {"match": true, "type": "GCP Private Key"}
+    }
+    
+    # GitHub
+    if value_str matches github_pat_pattern {
+        return {"match": true, "type": "GitHub Personal Access Token"}
+    }
+    if value_str matches github_oauth_pattern {
+        return {"match": true, "type": "GitHub OAuth Token"}
+    }
+    if value_str matches github_app_token_pattern {
+        return {"match": true, "type": "GitHub App Token"}
+    }
+    
+    # GitLab
+    if value_str matches gitlab_pat_pattern {
+        return {"match": true, "type": "GitLab Personal Access Token"}
+    }
+    
+    # HashiCorp
+    if value_str matches vault_token_pattern {
+        return {"match": true, "type": "HashiCorp Vault Token"}
+    }
+    if value_str matches terraform_cloud_token_pattern {
+        return {"match": true, "type": "Terraform Cloud Token"}
+    }
+    if value_str matches consul_token_pattern and strings.has_prefix(value_str, "consul") {
+        return {"match": true, "type": "Consul ACL Token"}
+    }
+    
+    # Kubernetes
+    if value_str matches k8s_service_account_token_pattern {
+        return {"match": true, "type": "Kubernetes Service Account Token"}
+    }
+    if value_str matches k8s_secret_pattern {
+        return {"match": true, "type": "Kubernetes Secret YAML"}
+    }
+    
+    # Docker
+    if value_str matches docker_config_pattern {
+        return {"match": true, "type": "Docker Config with Credentials"}
+    }
+    
+    # Database Connection Strings
+    if value_str matches postgres_connection_pattern {
+        return {"match": true, "type": "PostgreSQL Connection String"}
+    }
+    if value_str matches mysql_connection_pattern {
+        return {"match": true, "type": "MySQL Connection String"}
+    }
+    if value_str matches mongodb_connection_pattern {
+        return {"match": true, "type": "MongoDB Connection String"}
+    }
+    if value_str matches redis_connection_pattern {
+        return {"match": true, "type": "Redis Connection String"}
+    }
+    
+    # API Keys
+    if value_str matches generic_api_key_pattern {
+        return {"match": true, "type": "Generic API Key"}
+    }
+    if value_str matches bearer_token_pattern {
+        return {"match": true, "type": "Bearer Token"}
+    }
+    if value_str matches jwt_token_pattern {
+        return {"match": true, "type": "JWT Token"}
+    }
+    
+    # SSH Keys
+    if value_str matches ssh_private_key_pattern {
+        return {"match": true, "type": "SSH Private Key"}
+    }
+    
+    # SSL/TLS
+    if value_str matches ssl_private_key_pattern {
+        return {"match": true, "type": "SSL/TLS Private Key"}
+    }
+    if value_str matches ssl_certificate_pattern and strings.contains(value_str, "PRIVATE") {
+        return {"match": true, "type": "SSL Certificate with Private Key"}
+    }
+    
+    # OAuth
+    if value_str matches oauth_client_secret_pattern {
+        return {"match": true, "type": "OAuth Client Secret"}
+    }
+    if value_str matches oauth_refresh_token_pattern {
+        return {"match": true, "type": "OAuth Refresh Token"}
+    }
+    
+    # Third-party Services
+    if value_str matches slack_token_pattern {
+        return {"match": true, "type": "Slack Token"}
+    }
+    if value_str matches slack_webhook_pattern {
+        return {"match": true, "type": "Slack Webhook URL"}
+    }
+    if value_str matches stripe_secret_key_pattern {
+        return {"match": true, "type": "Stripe Secret Key"}
+    }
+    if value_str matches sendgrid_api_key_pattern {
+        return {"match": true, "type": "SendGrid API Key"}
+    }
+    if value_str matches npm_token_pattern {
+        return {"match": true, "type": "NPM Token"}
+    }
+    
+    # Passwords
+    if value_str matches password_field_pattern {
+        return {"match": true, "type": "Password Field"}
+    }
+    if value_str matches basic_auth_pattern {
+        return {"match": true, "type": "Basic Authentication Header"}
+    }
+    
+    # PII
+    if value_str matches ssn_pattern {
+        return {"match": true, "type": "Social Security Number"}
+    }
+    if value_str matches credit_card_pattern {
+        return {"match": true, "type": "Credit Card Number"}
+    }
+    
+    return {"match": false, "type": ""}
+}
+
+# =============================================================================
+# MAIN POLICY LOGIC
+# =============================================================================
+
+# Get the KV operation details
+operation = kv.operation
+key = kv.key
+value = kv.value
+
+# Only check write operations (put, delete, cas)
+main = rule when operation in ["put", "cas"] {
+    result = contains_sensitive_data(value)
+    
+    if result.match {
+        print("❌ BLOCKED: Sensitive data detected in KV write")
+        print("   Key:", key)
+        print("   Type:", result.type)
+        print("   Namespace:", kv.namespace else "default")
+        print("   Partition:", kv.partition else "default")
+        print("")
+        print("   This write has been blocked to prevent storing sensitive data in Consul KV.")
+        print("   Please use a secure secrets management solution like HashiCorp Vault.")
+        print("")
+        print("   If this is a false positive, contact your Consul administrator.")
+    }
+    
+    not result.match
+}
