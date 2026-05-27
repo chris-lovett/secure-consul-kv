@@ -152,8 +152,5 @@ EOF
     }
   }
   
-  # Explicitly deny access to other team prefixes
-  # This prevents cross-team access within the namespace
-  key_prefix "" {
-    policy = "deny"
-  }
+  # NOTE: No catch-all deny rule is needed. Consul ACL defaults to deny for
+  # any path not explicitly granted, and explicit deny rules take precedence.
