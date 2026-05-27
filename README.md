@@ -9,13 +9,11 @@ This repo shows how to lock down Consul KV writes using **ACL policies with embe
 Sentinel code lives inside the same HCL file as your ACL rules — nested directly in the `key_prefix` stanza for the path you want to guard. There is no separate command to upload or register it; the policy file is the single source of truth for both who can write **and** what they are allowed to write.
 
 ```hcl
-namespace "AIT-001" {
+key_prefix "AIT-001/secrets/" {  # ← ACL rule: who can write to this path
+  policy = "write"
 
-  key_prefix "AIT-001/secrets/" {  # ← ACL rule: who can write to this path
-    policy = "write"
-
-    sentinel {                      # ← Sentinel block: what they are allowed to write
-      code = <<EOF
+  sentinel {                      # ← Sentinel block: what they are allowed to write
+    code = <<EOF
 import "strings"
 
 no_aws_keys = rule { not strings.contains(value, "AKIA") }
@@ -23,10 +21,8 @@ no_passwords = rule { not strings.contains(value, "password=") }
 
 main = rule { no_aws_keys and no_passwords }
 EOF
-      enforcementlevel = "hard-mandatory"  # write is blocked unconditionally if main = false
-    }
+    enforcementlevel = "hard-mandatory"  # write is blocked unconditionally if main = false
   }
-
 }
 ```
 

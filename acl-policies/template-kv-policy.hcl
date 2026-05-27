@@ -21,8 +21,6 @@
 #   soft-mandatory  — blocks the write; a Consul operator can override
 #   hard-mandatory  — blocks the write unconditionally
 
-namespace "AIT-XXX" {
-
   # ---------------------------------------------------------------------------
   # Sub-prefix: AIT-XXX/secrets/
   # Strictest enforcement. Secrets should be small opaque references or
@@ -184,11 +182,3 @@ EOF
   event_prefix "" {
     policy = "deny"
   }
-}
-
-# If using multiple namespaces, deny access to other namespaces
-namespace_prefix "" {
-  key_prefix "" {
-    policy = "deny"
-  }
-}

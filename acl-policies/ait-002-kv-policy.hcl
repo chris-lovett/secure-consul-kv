@@ -16,8 +16,6 @@
 #   value (string) — the value being stored
 #   flags (int)    — the optional KV flags integer
 
-namespace "AIT-002" {
-
   # ---------------------------------------------------------------------------
   # Sub-prefix: AIT-002/secrets/
   # Strictest enforcement. Secrets should be small opaque references or
@@ -178,11 +176,3 @@ EOF
   event_prefix "" {
     policy = "deny"
   }
-}
-
-# Deny access to other namespaces
-namespace_prefix "" {
-  key_prefix "" {
-    policy = "deny"
-  }
-}
