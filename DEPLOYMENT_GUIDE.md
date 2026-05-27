@@ -23,14 +23,17 @@ This guide walks you through:
 ## Customer Runbook (Happy Path)
 
 ```bash
+# 0) Preflight (admin auth must work)
+consul acl token read -self
+
 # 1) Namespace
 consul namespace create -name AIT-001 -description "Namespace for team AIT-001"
 
-# 2) ACL policy with Sentinel stanza
+# 2) Baseline ACL policy (known-good write rule)
 consul acl policy create \
   -name "ait-001-kv-policy" \
   -namespace "AIT-001" \
-  -rules @acl-policies/ait-001-kv-policy.hcl
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
 
 # 3) Team token
 consul acl token create \
@@ -38,8 +41,22 @@ consul acl token create \
   -policy-name "ait-001-kv-policy" \
   -namespace "AIT-001"
 
-# 4) Validate
-./scripts/test-kv-access.sh AIT-001 <team-token>
+# 4) Prove ACL write works first
+consul kv put -token=<team-token> -namespace=AIT-001 \
+  AIT-001/config/app-mode '{"environment":"prod","port":8080}'
+
+# 5) Enable Sentinel by updating policy from file
+consul acl policy update \
+  -name "ait-001-kv-policy" \
+  -namespace "AIT-001" \
+  -rules @acl-policies/ait-001-kv-policy.hcl
+
+# 6) Verify rules are present (must show key_prefix + sentinel blocks)
+consul acl policy read -name "ait-001-kv-policy" -namespace "AIT-001"
+
+# 7) Validate Sentinel behavior (manual + automated)
+consul kv put -token=<team-token> -namespace=AIT-001 \
+  AIT-001/secrets/bad-key '{"access_key":"AKIAIOSFODNN7EXAMPLE"}'
 ./scripts/test-sentinel-policies.sh AIT-001 <team-token>
 ```
 
@@ -143,10 +160,16 @@ consul namespace list
 ### Deploy Policy for Team AIT-001
 
 ```bash
-# Create ACL policy from file
+# Create baseline ACL policy first (known-good write)
 consul acl policy create \
   -name "ait-001-kv-policy" \
   -description "KV access policy for team AIT-001" \
+  -namespace "AIT-001" \
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
+
+# Then enable Sentinel rules by updating from file
+consul acl policy update \
+  -name "ait-001-kv-policy" \
   -namespace "AIT-001" \
   -rules @acl-policies/ait-001-kv-policy.hcl
 
@@ -198,7 +221,7 @@ consul acl token create \
 # Description:      KV access token for team AIT-001
 # ...
 
-# Store the token securely
+# Store the SecretID securely (this is the value used with -token=...)
 export AIT_001_TOKEN="abcdef12-3456-7890-abcd-ef1234567890"
 echo "AIT-001 Token: $AIT_001_TOKEN" >> tokens.txt
 ```
@@ -292,7 +315,7 @@ consul kv put \
   AIT-001/config/aws.json \
   '{"aws_access_key":"AKIAIOSFODNN7EXAMPLE","aws_secret_key":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}'
 
-# Expected: Sentinel policy violation (write denied)
+# Expected: write denied by Sentinel (hard-mandatory)
 ```
 
 ### Test 4: Oversized Payload Behavior
@@ -504,6 +527,23 @@ consul acl policy read -name "ait-001-kv-policy" -namespace "AIT-001"
 
 # Re-run Sentinel policy test script
 ./scripts/test-sentinel-policies.sh AIT-001 "$AIT_001_TOKEN"
+```
+
+### Issue: key:write denied on valid AIT-001 path
+
+```bash
+# Confirm token identity and attached policies in the target namespace
+consul acl token read -self -token="$AIT_001_TOKEN" -namespace="AIT-001"
+
+# Expanded view shows effective merged rules
+consul acl token read -self -token="$AIT_001_TOKEN" -namespace="AIT-001" -expanded
+
+# Confirm policy rules are not empty after update
+consul acl policy read -name "ait-001-kv-policy" -namespace "AIT-001"
+
+# If needed, reset to baseline write-only policy and re-test before Sentinel
+consul acl policy update -name "ait-001-kv-policy" -namespace "AIT-001" \
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
 ```
 
 ### Issue: VM Cannot Connect
