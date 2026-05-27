@@ -65,12 +65,6 @@ Your organization runs **Consul Enterprise on OpenShift** and needs to provide s
 # Check Consul version and Enterprise features
 consul version
 
-# Verify Sentinel is available (Enterprise only)
-consul operator sentinel list 2>/dev/null && echo "✅ Sentinel available" || echo "❌ Sentinel not available"
-
-# Check ACLs are enabled
-consul acl bootstrap 2>&1 | grep -q "ACL support disabled" && echo "❌ ACLs disabled" || echo "✅ ACLs enabled"
-
 # Verify you have admin access
 consul acl token read -self
 ```
