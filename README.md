@@ -55,79 +55,131 @@ EOF
 
 ## End-to-end demo
 
-All commands below use team `AIT-001`. The policy file at
-`acl-policies/ait-001-kv-policy.hcl` already contains tiered Sentinel stanzas
-for `AIT-001/secrets/`, `AIT-001/config/`, and the catch-all `AIT-001/` prefix.
+All commands below use namespace `ait-001` and key path prefix `AIT-001/`.
 
-### Step 1 — Create the namespace
+### Step 1 — Preflight environment
+
+```bash
+echo "$CONSUL_HTTP_ADDR"
+echo "${CONSUL_HTTP_TOKEN:+TOKEN_SET}"
+consul acl token read -self
+```
+
+If `consul acl token read -self` fails, fix admin auth first.
+
+### Step 2 — Create the namespace
 
 ```bash
 consul namespace create \
-  -name AIT-001 \
-  -description "Team AIT-001 namespace"
+  -name ait-001 \
+  -description "Team ait-001 namespace"
 ```
 
-### Step 2 — Apply the ACL policy (Sentinel rules are inside it)
+If it already exists, continue.
+
+### Step 3 — Create a known-good ACL baseline policy
+
+Start with a minimal policy to prove ACL wiring before adding Sentinel complexity.
 
 ```bash
 consul acl policy create \
   -name ait-001-kv-policy \
-  -namespace AIT-001 \
-  -rules @acl-policies/ait-001-kv-policy.hcl
+  -namespace ait-001 \
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
 ```
 
-> To update Sentinel rules later, edit the `.hcl` file and run
-> `consul acl policy update -name ait-001-kv-policy -rules @acl-policies/ait-001-kv-policy.hcl`.
-> No other registration step is needed.
+If policy already exists:
 
-### Step 3 — Create a team token
+```bash
+consul acl policy update \
+  -name ait-001-kv-policy \
+  -namespace ait-001 \
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
+```
+
+### Step 4 — Create a team token
 
 ```bash
 consul acl token create \
-  -description "KV access token for team AIT-001" \
+  -description "KV access token for team ait-001" \
   -policy-name ait-001-kv-policy \
-  -namespace AIT-001
+  -namespace ait-001
 ```
 
-Save the `SecretID` from the output — you will use it as `<team-token>` below.
+Save the `SecretID` as `<team-token>`.
 
-### Step 4 — Prove enforcement with a manual write
-
-Run these two writes with the team token. The first should succeed; the second should be denied.
+### Step 5 — Prove ACL write works (no Sentinel yet)
 
 ```bash
-# This write should SUCCEED — clean config value
 consul kv put \
   -token=<team-token> \
-  -namespace=AIT-001 \
+  -namespace=ait-001 \
   "AIT-001/config/app-mode" \
   '{"environment":"prod","port":8080}'
+```
 
-# This write should FAIL — AWS credential pattern detected
+Expected result: success.
+
+### Step 6 — Apply full Sentinel-enabled policy from file
+
+```bash
+consul acl policy update \
+  -name ait-001-kv-policy \
+  -namespace ait-001 \
+  -rules @acl-policies/ait-001-kv-policy.hcl
+```
+
+Immediately verify rules are present:
+
+```bash
+consul acl policy read \
+  -name ait-001-kv-policy \
+  -namespace ait-001
+```
+
+You should see `key_prefix "AIT-001/secrets/"`, `key_prefix "AIT-001/config/"`, and `key_prefix "AIT-001/"` blocks with `sentinel { ... }` stanzas.
+
+### Step 7 — Prove Sentinel enforcement
+
+Positive write (should succeed):
+
+```bash
 consul kv put \
   -token=<team-token> \
-  -namespace=AIT-001 \
+  -namespace=ait-001 \
+  "AIT-001/config/app-mode" \
+  '{"environment":"prod","port":8080}'
+```
+
+Negative write (should fail due to Sentinel):
+
+```bash
+consul kv put \
+  -token=<team-token> \
+  -namespace=ait-001 \
   "AIT-001/secrets/bad-key" \
   '{"access_key":"AKIAIOSFODNN7EXAMPLE"}'
 ```
 
-Expected output for the second command:
-```
-Error writing data for key AIT-001/secrets/bad-key: Unexpected response code: 500
-```
-That 500 is Consul surfacing the Sentinel `hard-mandatory` denial.
+The second command should be denied (typically surfaced as HTTP 500 from the KV API because Sentinel blocked the write).
 
-### Step 5 — Run the full test suite
+### Step 8 — Run full Sentinel test suite
 
 ```bash
-# 12 tests across all three sub-prefix enforcement tiers
-./scripts/test-sentinel-policies.sh AIT-001 <team-token>
+./scripts/test-sentinel-policies.sh ait-001 <team-token>
 ```
 
-All 12 tests should pass. The suite covers:
-- **Section 1** — baseline `AIT-001/` prefix: AWS key blocked, password blocked, valid config allowed, oversized payload blocked
-- **Section 2** — `AIT-001/secrets/` sub-prefix: Vault token blocked, GitHub PAT blocked, DB connection string blocked, payload >64 KB blocked, opaque reference allowed
-- **Section 3** — `AIT-001/config/` sub-prefix: AWS key blocked, inline password blocked, valid feature-flag config allowed
+All tests should pass across baseline, `secrets/`, and `config/` sub-prefixes.
+
+### Troubleshooting quick checks
+
+```bash
+# Confirm token is in expected namespace and has expected policy
+consul acl token read -self -token=<team-token> -namespace=ait-001
+
+# If writes fail with key:write denied, inspect effective permissions
+consul acl token read -self -token=<team-token> -namespace=ait-001 -expanded
+```
 
 ---
 
