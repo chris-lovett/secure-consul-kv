@@ -1,477 +1,55 @@
 # Secure Consul KV Access for VMs with ACLs and Sentinel
 
-A comprehensive tutorial for securing Consul Key-Value store access on VMs using ACL policies and Sentinel governance policies.
-
-## Use Case
-
-Your organization runs **Consul Enterprise on OpenShift** and needs to provide secure KV store access to VM-based applications. Each team has:
-
-- A unique team identifier (e.g., `GRP-001`, `GRP-002`, etc.)
-- A dedicated Consul namespace matching their team ID
-- KV paths scoped to their namespace: `GRP-XXX/`
-- Users in predefined groups: `GRP-XXX` (matching their team ID)
-
-**Security Requirements:**
-1. **ACL Policies:** Users in `GRP-XXX` group have read/write access only to `GRP-XXX/` KV paths in their namespace
-2. **Sentinel Policy #1:** Block writes containing sensitive data patterns (SSN, credit cards, API keys, etc.)
-3. **Sentinel Policy #2:** Enforce maximum KV entry size limits
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Consul Enterprise Cluster                 │
-│                      (on OpenShift)                          │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │                    Namespace: GRP-001                   │ │
-│  │  ┌──────────────────────────────────────────────────┐  │ │
-│  │  │              KV Store: GRP-001/                   │  │ │
-│  │  │  ├── config/                                      │  │ │
-│  │  │  ├── secrets/  ← Sentinel blocks sensitive data  │  │ │
-│  │  │  └── data/     ← Sentinel enforces size limits   │  │ │
-│  │  └──────────────────────────────────────────────────┘  │ │
-│  │                                                          │ │
-│  │  ACL Policy: GRP-001-kv-policy                          │ │
-│  │  ├── Read: GRP-001/* in namespace GRP-001              │ │
-│  │  └── Write: GRP-001/* in namespace GRP-001             │ │
-│  └────────────────────────────────────────────────────────┘ │
-│                                                              │
-│  Sentinel Policies (Global):                                │
-│  ├── sensitive-data-blocker.sentinel                        │
-│  └── kv-size-limit.sentinel                                 │
-└─────────────────────────────────────────────────────────────┘
-                              ▲
-                              │ Consul API
-                              │
-                    ┌─────────┴─────────┐
-                    │   VM Applications  │
-                    │   (GRP-001 group)  │
-                    │   Token: GRP-001   │
-                    └────────────────────┘
-```
+Customer-facing quickstart for implementing KV access controls and Sentinel policy enforcement with Consul Enterprise.
 
 ## Prerequisites
 
-- Consul Enterprise 1.16+ (with Sentinel support)
-- Consul cluster deployed on OpenShift
-- Consul CLI installed on your workstation
-- Cluster-admin or consul-admin access
-- `CONSUL_HTTP_ADDR` and `CONSUL_HTTP_TOKEN` environment variables set
+- Consul Enterprise with ACLs enabled
+- Admin token exported as `CONSUL_HTTP_TOKEN`
+- Consul address exported as `CONSUL_HTTP_ADDR`
 
-### Verify Prerequisites
+## 5-Command Runbook
 
-```bash
-# Check Consul version and Enterprise features
-consul version
-
-# Verify you have admin access
-consul acl token read -self
-```
-
-## Quick Start (30 minutes)
+Use team `AIT-001` for the example.
 
 ```bash
-# 1. Create namespace for team GRP-001
-consul namespace create -name GRP-001 -description "Team GRP-001 namespace"
+# 1) Create namespace
+consul namespace create -name AIT-001 -description "Team AIT-001 namespace"
 
-# 2. Create ACL policy for GRP-001
+# 2) Create ACL policy (includes Sentinel stanza)
 consul acl policy create \
-  -name GRP-001-kv-policy \
-  -namespace GRP-001 \
-  -rules @acl-policies/GRP-001-kv-policy.hcl
+  -name ait-001-kv-policy \
+  -namespace AIT-001 \
+  -rules @acl-policies/ait-001-kv-policy.hcl
 
-# 3. Create ACL token for GRP-001 users
+# 3) Create team token (save SecretID from output)
 consul acl token create \
-  -description "GRP-001 team KV access" \
-  -policy-name GRP-001-kv-policy \
-  -namespace GRP-001
+  -description "KV access token for team AIT-001" \
+  -policy-name ait-001-kv-policy \
+  -namespace AIT-001
 
-# 4. Deploy Sentinel policies
-consul operator sentinel create \
-  -name sensitive-data-blocker \
-  -enforcement-level hard-mandatory \
-  -code @sentinel-policies/sensitive-data-blocker.sentinel
+# 4) Validate ACL behavior
+./scripts/test-kv-access.sh AIT-001 <team-token>
 
-consul operator sentinel create \
-  -name kv-size-limit \
-  -enforcement-level soft-mandatory \
-  -code @sentinel-policies/kv-size-limit.sentinel
-
-# 5. Test the configuration
-./scripts/test-kv-access.sh GRP-001 <token-from-step-3>
+# 5) Validate Sentinel behavior
+./scripts/test-sentinel-policies.sh AIT-001 <team-token>
 ```
 
-## Repository Structure
+## Expected Outcomes
 
-```
-consul-kv-security-tutorial/
-├── README.md                                    # This file
-├── DEPLOYMENT_GUIDE.md                          # Step-by-step instructions
-├── acl-policies/                                # ACL policy definitions
-│   ├── GRP-001-kv-policy.hcl                   # Example for team GRP-001
-│   ├── GRP-002-kv-policy.hcl                   # Example for team GRP-002
-│   └── template-kv-policy.hcl                  # Template for new teams
-├── sentinel-policies/                           # Sentinel policy definitions
-│   ├── sensitive-data-blocker.sentinel         # Blocks sensitive data patterns
-│   ├── kv-size-limit.sentinel                  # Enforces size limits
-│   └── test-cases/                             # Test data for Sentinel
-│       ├── valid-data.json
-│       ├── invalid-ssn.json
-│       ├── invalid-credit-card.json
-│       └── invalid-size.json
-├── scripts/                                     # Automation scripts
-│   ├── create-team-namespace.sh                # Create namespace + ACL for new team
-│   ├── test-kv-access.sh                       # Test ACL permissions
-│   ├── test-sentinel-policies.sh               # Test Sentinel enforcement
-│   └── cleanup.sh                              # Remove test data
-└── examples/                                    # Usage examples
-    ├── vm-consul-config.hcl                    # Consul agent config for VMs
-    ├── python-kv-client.py                     # Python KV client example
-    └── curl-examples.sh                        # curl command examples
-```
+- Team token can read/write only under `AIT-001/` in namespace `AIT-001`.
+- Cross-namespace and cross-team writes are denied.
+- Sensitive payload patterns are denied by Sentinel rules.
+- Oversized values are denied by Sentinel rules.
 
-## Security Model
+## Repo Contents
 
-### Layer 1: Namespace Isolation
-Each team gets a dedicated Consul namespace:
-- Namespace name matches team ID: `GRP-001`, `GRP-002`, etc.
-- Provides logical isolation between teams
-- Prevents cross-team access at the namespace level
+- `acl-policies/`: Team ACL policies with Sentinel stanzas
+- `sentinel-policies/`: Sentinel policy examples and test cases
+- `scripts/test-kv-access.sh`: ACL verification
+- `scripts/test-sentinel-policies.sh`: Sentinel verification
+- `DEPLOYMENT_GUIDE.md`: Full deployment and troubleshooting guide
 
-### Layer 2: ACL Policies
-Fine-grained access control within namespaces:
-- **Read access:** `key_prefix "GRP-XXX/" { policy = "read" }`
-- **Write access:** `key_prefix "GRP-XXX/" { policy = "write" }`
-- **Deny all other paths:** Default deny policy
+## Next Step
 
-### Layer 3: Sentinel Policies
-Governance and compliance enforcement:
-- **Content validation:** Block sensitive data patterns
-- **Size limits:** Prevent large entries that could impact performance
-- **Audit trail:** All policy violations are logged
-
-## ACL Policy Design
-
-### Template Structure
-
-```hcl
-# Template: acl-policies/template-kv-policy.hcl
-namespace "GRP-XXX" {
-  # Allow read/write to team's KV prefix
-  key_prefix "GRP-XXX/" {
-    policy = "write"
-  }
-  
-  # Deny access to other team prefixes
-  key_prefix "" {
-    policy = "deny"
-  }
-  
-  # Allow reading service catalog (optional)
-  service_prefix "" {
-    policy = "read"
-  }
-  
-  # Allow reading node information (optional)
-  node_prefix "" {
-    policy = "read"
-  }
-}
-```
-
-### Creating Policies for Multiple Teams
-
-Use the provided script to generate policies for multiple teams:
-
-```bash
-# Generate policies for teams GRP-001 through GRP-010
-./scripts/create-team-namespace.sh GRP-001
-./scripts/create-team-namespace.sh GRP-002
-# ... etc
-```
-
-## Sentinel Policy Design
-
-### Policy 1: Sensitive Data Blocker
-
-Detects and blocks 50+ sensitive data patterns across modern cloud and infrastructure environments:
-
-#### Cloud Provider Credentials
-- **AWS:**
-  - Access Keys (AKIA*, ASIA*)
-  - Secret Keys (40-character base64)
-  - Session Tokens (STS temporary credentials)
-- **Azure:**
-  - Client Secrets (34-40 characters)
-  - Storage Account Keys (88-character base64)
-  - Connection Strings (DefaultEndpointsProtocol format)
-- **Google Cloud:**
-  - API Keys (AIza prefix)
-  - Service Account JSON files
-  - Private Keys (PEM format)
-
-#### Version Control Tokens
-- **GitHub:**
-  - Personal Access Tokens (ghp_)
-  - OAuth Tokens (gho_)
-  - App Tokens (ghs_)
-  - Refresh Tokens (ghr_)
-- **GitLab:**
-  - Personal Access Tokens (glpat-)
-  - Runner Registration Tokens
-
-#### HashiCorp Product Tokens
-- Vault Tokens (hvs. prefix)
-- Terraform Cloud Tokens
-- Consul ACL Tokens (UUID format)
-
-#### Container & Kubernetes
-- Kubernetes Service Account Tokens (JWT format)
-- Kubernetes Secret YAML manifests
-- Docker Config with authentication
-- Docker registry passwords
-
-#### Database Connection Strings
-- PostgreSQL (postgres:// or postgresql://)
-- MySQL (mysql://)
-- MongoDB (mongodb:// or mongodb+srv://)
-- Redis (redis://)
-
-#### API Keys & Authentication
-- Generic API Keys (api_key, apikey patterns)
-- Bearer Tokens
-- JWT Tokens (eyJ prefix)
-- OAuth Client Secrets
-- OAuth Refresh Tokens
-
-#### SSH & SSL/TLS
-- SSH Private Keys (RSA, DSA, EC, OpenSSH)
-- SSH Public Keys
-- SSL/TLS Private Keys
-- SSL Certificates with private keys
-- PKCS12 keystores
-
-#### Third-Party Service Tokens
-- **Slack:** Bot tokens, webhooks
-- **Stripe:** Secret keys, restricted keys
-- **Twilio:** Account SIDs, auth tokens
-- **SendGrid:** API keys
-- **Mailgun:** API keys
-- **NPM:** Access tokens
-- **PyPI:** Upload tokens
-
-#### Passwords & Authentication
-- Password fields (password=, passwd=, pwd=)
-- Basic Authentication headers
-- Encryption keys (AES, RSA)
-
-#### Personal Identifiable Information (PII)
-- Social Security Numbers (XXX-XX-XXXX)
-- Credit Card Numbers (16-digit patterns)
-- Email addresses
-
-**Enforcement Level:** `hard-mandatory` (blocks writes, cannot be overridden)
-
-**Detection Method:** Regex pattern matching on KV values during write operations (PUT, CAS)
-
-**False Positives:** Contact your Consul administrator if legitimate data is blocked
-
-### Policy 2: KV Size Limit
-
-Enforces maximum entry size to prevent performance issues:
-
-- **Maximum key size:** 512 bytes
-- **Maximum value size:** 512 KB (configurable)
-- **Total entry size:** 512 KB
-
-**Enforcement Level:** `soft-mandatory` (blocks writes, can be overridden by admin)
-
-## Testing
-
-### Test ACL Permissions
-
-```bash
-# Test valid access (should succeed)
-./scripts/test-kv-access.sh GRP-001 <token> write GRP-001/config/app.json '{"setting":"value"}'
-
-# Test invalid access (should fail)
-./scripts/test-kv-access.sh GRP-001 <token> write GRP-002/config/app.json '{"setting":"value"}'
-```
-
-### Test Sentinel Policies
-
-```bash
-# Test sensitive data blocking
-./scripts/test-sentinel-policies.sh sensitive-data-blocker
-
-# Test size limits
-./scripts/test-sentinel-policies.sh kv-size-limit
-```
-
-## VM Configuration
-
-### Consul Agent Configuration
-
-VMs need Consul agent configured with the team's ACL token:
-
-```hcl
-# /etc/consul.d/consul.hcl
-datacenter = "dc1"
-data_dir = "/opt/consul"
-log_level = "INFO"
-
-# Connect to Consul cluster on OpenShift
-retry_join = ["consul-server.consul.svc.cluster.local"]
-
-# ACL configuration
-acl {
-  enabled = true
-  default_policy = "deny"
-  enable_token_persistence = true
-  tokens {
-    agent = "GRP-001-token-here"
-    default = "GRP-001-token-here"
-  }
-}
-
-# Namespace configuration (Enterprise)
-namespace = "GRP-001"
-```
-
-### Application Integration
-
-Applications on VMs can access KV using:
-
-1. **Consul CLI:**
-```bash
-export CONSUL_HTTP_TOKEN="GRP-001-token"
-export CONSUL_NAMESPACE="GRP-001"
-consul kv put GRP-001/config/app.json @config.json
-consul kv get GRP-001/config/app.json
-```
-
-2. **HTTP API:**
-```bash
-curl -H "X-Consul-Token: GRP-001-token" \
-     -H "X-Consul-Namespace: GRP-001" \
-     -X PUT \
-     -d @config.json \
-     https://consul.example.com/v1/kv/GRP-001/config/app.json
-```
-
-3. **SDK (Python example):**
-```python
-import consul
-
-c = consul.Consul(
-    host='consul.example.com',
-    token='GRP-001-token',
-    namespace='GRP-001'
-)
-
-# Write to KV
-c.kv.put('GRP-001/config/app.json', '{"setting":"value"}')
-
-# Read from KV
-index, data = c.kv.get('GRP-001/config/app.json')
-```
-
-## Monitoring and Auditing
-
-### Enable Audit Logging
-
-```bash
-# Enable audit logging in Consul Enterprise
-consul operator audit enable \
-  -type file \
-  -path /var/log/consul/audit.log
-```
-
-### Monitor Policy Violations
-
-```bash
-# Watch for Sentinel policy violations
-tail -f /var/log/consul/audit.log | grep -i sentinel
-
-# Watch for ACL denials
-tail -f /var/log/consul/audit.log | grep -i "permission denied"
-```
-
-### Metrics
-
-Key metrics to monitor:
-- `consul.sentinel.policy.evaluation` - Sentinel policy evaluations
-- `consul.acl.token.cache_hit` - ACL token cache performance
-- `consul.kv.apply` - KV write operations
-
-## Troubleshooting
-
-### ACL Permission Denied
-
-```bash
-# Verify token has correct policy
-consul acl token read -id <token-id>
-
-# Check policy rules
-consul acl policy read -name GRP-001-kv-policy
-
-# Test token permissions
-consul kv put -token=<token> GRP-001/test "value"
-```
-
-### Sentinel Policy Blocking Valid Data
-
-```bash
-# Check Sentinel policy logs
-consul operator sentinel read -name sensitive-data-blocker
-
-# Test policy with sample data
-consul operator sentinel test \
-  -name sensitive-data-blocker \
-  -data @test-data.json
-```
-
-### VM Cannot Connect to Consul
-
-```bash
-# Check network connectivity
-nc -zv consul-server.consul.svc.cluster.local 8500
-
-# Verify token is valid
-curl -H "X-Consul-Token: <token>" \
-     https://consul.example.com/v1/agent/self
-
-# Check Consul agent logs on VM
-journalctl -u consul -f
-```
-
-## Best Practices
-
-1. **Token Rotation:** Rotate ACL tokens regularly (90 days recommended)
-2. **Least Privilege:** Grant minimum necessary permissions
-3. **Audit Logging:** Always enable audit logging in production
-4. **Sentinel Testing:** Test Sentinel policies thoroughly before deployment
-5. **Namespace Naming:** Use consistent naming convention (GRP-XXX)
-6. **Documentation:** Document team-specific KV path conventions
-7. **Monitoring:** Set up alerts for policy violations
-8. **Backup:** Regular backups of Consul KV data
-
-## Next Steps
-
-1. Review the [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) for detailed setup instructions
-2. Customize ACL policies in `acl-policies/` for your teams
-3. Review and adjust Sentinel policies in `sentinel-policies/`
-4. Test the configuration using provided scripts
-5. Deploy to production following the deployment guide
-
-## Resources
-
-- [Consul ACL System](https://developer.hashicorp.com/consul/docs/security/acl)
-- [Consul Namespaces](https://developer.hashicorp.com/consul/docs/enterprise/namespaces)
-- [Sentinel Policy Language](https://docs.hashicorp.com/sentinel/language)
-- [Consul KV Store](https://developer.hashicorp.com/consul/docs/dynamic-app-config/kv)
-
----
-
-**Ready to get started?** Follow the [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) for step-by-step instructions! 🔒
+Proceed to `DEPLOYMENT_GUIDE.md` for full production rollout instructions.

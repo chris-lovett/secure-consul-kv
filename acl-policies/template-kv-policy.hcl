@@ -7,6 +7,22 @@ namespace "AIT-XXX" {
   # Grant read/write access to team's KV prefix
   key_prefix "AIT-XXX/" {
     policy = "write"
+
+    # Sentinel policy is evaluated during KV writes.
+    # Update patterns/limits to match your security requirements.
+    sentinel {
+      code = <<EOF
+import "strings"
+
+main = rule {
+  length(value) <= 524288 and
+  not strings.contains(value, "AKIA") and
+  not strings.contains(value, "BEGIN RSA PRIVATE KEY") and
+  not strings.contains(value, "password")
+}
+EOF
+      enforcementlevel = "hard-mandatory"
+    }
   }
   
   # Explicitly deny access to other team prefixes

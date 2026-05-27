@@ -1,6 +1,6 @@
 # Deployment Guide - Secure Consul KV Access
 
-Step-by-step instructions for deploying ACL and Sentinel policies to secure Consul KV access for VM-based applications.
+Step-by-step instructions for deploying ACL and Sentinel policies for Consul KV access.
 
 ## Overview
 
@@ -9,11 +9,39 @@ This guide walks you through:
 2. Creating Consul namespaces for teams
 3. Deploying ACL policies
 4. Creating ACL tokens
-5. Deploying Sentinel policies
+5. Validating Sentinel policy parsing and enforcement
 6. Testing the configuration
 7. Configuring VMs
 
+### Enforcement Model (Important)
+
+- Consul ACLs enforce **who** can read/write and **which** KV paths are allowed.
+- Sentinel rules are enforced through ACL policy `sentinel { ... }` stanzas on KV writes.
+
 **Estimated Time:** 45-60 minutes
+
+## Customer Runbook (Happy Path)
+
+```bash
+# 1) Namespace
+consul namespace create -name AIT-001 -description "Namespace for team AIT-001"
+
+# 2) ACL policy with Sentinel stanza
+consul acl policy create \
+  -name "ait-001-kv-policy" \
+  -namespace "AIT-001" \
+  -rules @acl-policies/ait-001-kv-policy.hcl
+
+# 3) Team token
+consul acl token create \
+  -description "KV access token for team AIT-001" \
+  -policy-name "ait-001-kv-policy" \
+  -namespace "AIT-001"
+
+# 4) Validate
+./scripts/test-kv-access.sh AIT-001 <team-token>
+./scripts/test-sentinel-policies.sh AIT-001 <team-token>
+```
 
 ## Prerequisites Verification
 
@@ -28,9 +56,8 @@ consul version
 # Revision: xxxxx
 # Build Date: xxxx-xx-xx
 
-# Verify Sentinel is available
-consul operator sentinel list 2>/dev/null
-# If this command works, Sentinel is available
+# Verify ACL policy parsing (includes Sentinel stanzas)
+consul acl policy create -name validate-policy -rules @acl-policies/template-kv-policy.hcl -dry-run
 ```
 
 ### Step 2: Verify ACLs are Enabled
@@ -202,47 +229,23 @@ consul acl token read -id "$AIT_001_TOKEN"
 consul acl token read -id "$AIT_002_TOKEN"
 ```
 
-## Phase 4: Deploy Sentinel Policies (10 minutes)
-
-### Deploy Sensitive Data Blocker Policy
+## Phase 4: Validate Sentinel Policy Parsing (10 minutes)
 
 ```bash
-# Create Sentinel policy
-consul operator sentinel create \
-  -name "sensitive-data-blocker" \
-  -description "Blocks KV writes containing sensitive data patterns" \
-  -enforcement-level "hard-mandatory" \
-  -scope "kv" \
-  -code @sentinel-policies/sensitive-data-blocker.sentinel
-
-# Verify policy was created
-consul operator sentinel read -name "sensitive-data-blocker"
+# Validate team policy parsing support
+consul acl policy create \
+  -name "validate-ait-001-policy" \
+  -namespace "AIT-001" \
+  -rules @acl-policies/ait-001-kv-policy.hcl \
+  -dry-run
 ```
 
-### Deploy KV Size Limit Policy
+### Review Policy Files
 
 ```bash
-# Create Sentinel policy
-consul operator sentinel create \
-  -name "kv-size-limit" \
-  -description "Enforces maximum KV entry size limits" \
-  -enforcement-level "soft-mandatory" \
-  -scope "kv" \
-  -code @sentinel-policies/kv-size-limit.sentinel
-
-# Verify policy was created
-consul operator sentinel read -name "kv-size-limit"
-```
-
-### Verify All Sentinel Policies
-
-```bash
-# List all Sentinel policies
-consul operator sentinel list
-
-# Expected output:
-# sensitive-data-blocker    hard-mandatory    kv
-# kv-size-limit            soft-mandatory    kv
+# Review Sentinel policy examples and test data:
+ls -1 sentinel-policies/
+ls -1 sentinel-policies/test-cases/
 ```
 
 ## Phase 5: Test Configuration (15 minutes)
@@ -279,7 +282,7 @@ consul kv put \
 # Expected: Permission denied error
 ```
 
-### Test 3: Sensitive Data Detection (Should Fail - Sentinel)
+### Test 3: Sentinel Conditional Rule Behavior
 
 ```bash
 # Try to write AWS credentials
@@ -289,10 +292,10 @@ consul kv put \
   AIT-001/config/aws.json \
   '{"aws_access_key":"AKIAIOSFODNN7EXAMPLE","aws_secret_key":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}'
 
-# Expected: Sentinel policy violation - AWS credentials detected
+# Expected: Sentinel policy violation (write denied)
 ```
 
-### Test 4: Size Limit Enforcement (Should Fail - Sentinel)
+### Test 4: Oversized Payload Behavior
 
 ```bash
 # Create a large value (> 512 KB)
@@ -305,7 +308,7 @@ consul kv put \
   AIT-001/data/large.bin \
   @large_value.txt
 
-# Expected: Sentinel policy violation - size limit exceeded
+# Expected: Sentinel policy violation or size-limit rejection
 
 # Cleanup
 rm large_value.txt
@@ -459,14 +462,14 @@ consul kv put -token="$AIT_001_TOKEN" -namespace="AIT-001" AIT-001/test "ok"
 consul kv get -token="$AIT_001_TOKEN" -namespace="AIT-001" AIT-001/test
 # ✅ Should write and read successfully
 
-# 4. Sentinel policies exist
-consul operator sentinel list | grep -E "sensitive-data-blocker|kv-size-limit"
-# ✅ Both policies should be listed
+# 4. Sentinel policy blocks sensitive content
+consul kv put -token="$AIT_001_TOKEN" -namespace="AIT-001" AIT-001/test/aws '{"aws_access_key":"AKIAIOSFODNN7EXAMPLE"}' 2>&1 | grep -Ei "sentinel|permission denied|denied"
+# ✅ Should be denied
 
-# 5. Sentinel blocks sensitive data
-consul kv put -token="$AIT_001_TOKEN" -namespace="AIT-001" \
-  AIT-001/test/aws '{"key":"AKIAIOSFODNN7EXAMPLE"}' 2>&1 | grep -i "sentinel"
-# ✅ Should be blocked by Sentinel
+# 5. Validate namespace ACL boundaries still work as expected
+consul kv put -token="$AIT_001_TOKEN" -namespace="AIT-001" AIT-001/test/acl "ok"
+consul kv put -token="$AIT_001_TOKEN" -namespace="AIT-002" AIT-002/test/acl "fail" 2>&1 | grep -i "permission denied"
+# ✅ First write succeeds, second is denied by ACL
 
 # 6. Cross-namespace access is denied
 consul kv put -token="$AIT_001_TOKEN" -namespace="AIT-002" \
@@ -493,20 +496,14 @@ consul acl token read -self
 consul acl policy create -name test -rules @acl-policies/ait-001-kv-policy.hcl -dry-run
 ```
 
-### Issue: Sentinel Policy Not Blocking
+### Issue: Sentinel Policy Not Enforcing
 
 ```bash
-# Check Sentinel policy is active
-consul operator sentinel read -name sensitive-data-blocker
+# Verify policy includes sentinel stanza
+consul acl policy read -name "ait-001-kv-policy" -namespace "AIT-001"
 
-# Check enforcement level
-# hard-mandatory = cannot be overridden
-# soft-mandatory = can be overridden by admin
-# advisory = warning only
-
-# Test with a known sensitive pattern
-consul kv put -token="$AIT_001_TOKEN" -namespace="AIT-001" \
-  test/aws '{"aws_access_key":"AKIAIOSFODNN7EXAMPLE"}'
+# Re-run Sentinel policy test script
+./scripts/test-sentinel-policies.sh AIT-001 "$AIT_001_TOKEN"
 ```
 
 ### Issue: VM Cannot Connect
@@ -554,10 +551,6 @@ consul acl token delete -id "$AIT_002_TOKEN"
 consul acl policy delete -name "ait-001-kv-policy" -namespace "AIT-001"
 consul acl policy delete -name "ait-002-kv-policy" -namespace "AIT-002"
 
-# Delete Sentinel policies (optional - only if recreating)
-consul operator sentinel delete -name "sensitive-data-blocker"
-consul operator sentinel delete -name "kv-size-limit"
-
 # Delete namespaces (optional - only if recreating)
 consul namespace delete -name "AIT-001"
 consul namespace delete -name "AIT-002"
@@ -574,9 +567,9 @@ consul namespace delete -name "AIT-002"
 ## Support
 
 - [Consul ACL Documentation](https://developer.hashicorp.com/consul/docs/security/acl)
-- [Sentinel Documentation](https://docs.hashicorp.com/sentinel)
+- [Sentinel ACL Policies (Enterprise)](https://developer.hashicorp.com/consul/docs/secure/acl/sentinel)
 - [Consul Enterprise Features](https://developer.hashicorp.com/consul/docs/enterprise)
 
 ---
 
-**Deployment complete!** 🎉 Your Consul KV store is now secured with ACLs and Sentinel policies.
+**Deployment complete!** 🎉 Your Consul KV store is now secured with ACL policies.

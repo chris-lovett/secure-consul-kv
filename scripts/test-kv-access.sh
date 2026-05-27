@@ -143,49 +143,8 @@ else
 fi
 echo ""
 
-# Test 7: Sensitive data blocking (Sentinel)
-echo -e "${YELLOW}Test 7: Testing Sentinel sensitive data blocking...${NC}"
-SENSITIVE_KEY="${TEAM_ID}/test/aws-creds"
-SENSITIVE_VALUE='{"aws_access_key":"AKIAIOSFODNN7EXAMPLE","aws_secret_key":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}'
-
-if consul kv put \
-    -token="$TOKEN" \
-    -namespace="$TEAM_ID" \
-    "$SENSITIVE_KEY" \
-    "$SENSITIVE_VALUE" > /dev/null 2>&1; then
-    echo -e "${RED}✗ Sentinel blocking: FAILED${NC}"
-    echo -e "${RED}  Sensitive data was not blocked (Sentinel policy issue!)${NC}"
-    # Cleanup
-    consul kv delete -token="$TOKEN" -namespace="$TEAM_ID" "$SENSITIVE_KEY" > /dev/null 2>&1
-else
-    echo -e "${GREEN}✓ Sentinel blocking: OK${NC}"
-    echo -e "${GREEN}  Sensitive data correctly blocked${NC}"
-fi
-echo ""
-
-# Test 8: Size limit enforcement (Sentinel)
-echo -e "${YELLOW}Test 8: Testing Sentinel size limit enforcement...${NC}"
-LARGE_KEY="${TEAM_ID}/test/large-value"
-# Create a value larger than 512 KB
-LARGE_VALUE=$(dd if=/dev/zero bs=1024 count=600 2>/dev/null | base64)
-
-if consul kv put \
-    -token="$TOKEN" \
-    -namespace="$TEAM_ID" \
-    "$LARGE_KEY" \
-    "$LARGE_VALUE" > /dev/null 2>&1; then
-    echo -e "${RED}✗ Size limit: FAILED${NC}"
-    echo -e "${RED}  Large value was not blocked (Sentinel policy issue!)${NC}"
-    # Cleanup
-    consul kv delete -token="$TOKEN" -namespace="$TEAM_ID" "$LARGE_KEY" > /dev/null 2>&1
-else
-    echo -e "${GREEN}✓ Size limit: OK${NC}"
-    echo -e "${GREEN}  Large value correctly blocked${NC}"
-fi
-echo ""
-
-# Test 9: Delete access
-echo -e "${YELLOW}Test 9: Testing delete access...${NC}"
+# Test 7: Delete access
+echo -e "${YELLOW}Test 7: Testing delete access...${NC}"
 if consul kv delete \
     -token="$TOKEN" \
     -namespace="$TEAM_ID" \
@@ -207,6 +166,6 @@ echo -e "Token:         ${TOKEN:0:8}...${TOKEN: -8}"
 echo ""
 echo -e "${GREEN}All tests completed!${NC}"
 echo ""
-echo -e "${YELLOW}Note: If any tests failed, review the ACL policies and Sentinel policies.${NC}"
+echo -e "${YELLOW}Note: This script validates ACL and namespace enforcement only.${NC}"
 
 # Made with Bob
