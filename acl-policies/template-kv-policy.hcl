@@ -157,28 +157,3 @@ EOF
   key_prefix "" {
     policy = "deny"
   }
-  
-  # Optional: Allow reading service catalog for service discovery
-  service_prefix "" {
-    policy = "read"
-  }
-  
-  # Optional: Allow reading node information
-  node_prefix "" {
-    policy = "read"
-  }
-  
-  # Optional: Allow reading prepared queries
-  query_prefix "" {
-    policy = "read"
-  }
-  
-  # Deny session creation (not needed for KV access)
-  session_prefix "" {
-    policy = "deny"
-  }
-  
-  # Deny event creation
-  event_prefix "" {
-    policy = "deny"
-  }

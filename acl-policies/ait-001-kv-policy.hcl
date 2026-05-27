@@ -151,28 +151,3 @@ EOF
   key_prefix "" {
     policy = "deny"
   }
-  
-  # Allow reading service catalog for service discovery
-  service_prefix "" {
-    policy = "read"
-  }
-  
-  # Allow reading node information
-  node_prefix "" {
-    policy = "read"
-  }
-  
-  # Allow reading prepared queries
-  query_prefix "" {
-    policy = "read"
-  }
-  
-  # Deny session creation
-  session_prefix "" {
-    policy = "deny"
-  }
-  
-  # Deny event creation
-  event_prefix "" {
-    policy = "deny"
-  }
