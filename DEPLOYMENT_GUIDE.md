@@ -529,6 +529,38 @@ consul acl policy read -name "ait-001-kv-policy" -namespace "AIT-001"
 ./scripts/test-sentinel-policies.sh AIT-001 "$AIT_001_TOKEN"
 ```
 
+### Issue: Need to tell ACL vs Sentinel failure
+
+Use failure signatures first:
+
+- ACL denial: HTTP `403` with `lacks permission 'key:write'`.
+- Sentinel denial: token has `key:write`, clean payload succeeds, violating payload fails (often HTTP `500`).
+
+Run this probe pair with the same token:
+
+```bash
+# Probe A (clean payload): should succeed when ACL is correct
+consul kv put \
+  -token="$AIT_001_TOKEN" \
+  -namespace="AIT-001" \
+  AIT-001/config/probe-ok \
+  '{"ok":true}'
+
+# Probe B (violating payload): should fail only when Sentinel is enforcing
+consul kv put \
+  -token="$AIT_001_TOKEN" \
+  -namespace="AIT-001" \
+  AIT-001/secrets/probe-bad \
+  '{"access_key":"AKIAIOSFODNN7EXAMPLE"}'
+```
+
+Interpretation:
+
+- Probe A fails with `403 key:write` -> ACL issue.
+- Probe A succeeds and Probe B fails -> Sentinel enforcement is working.
+- Probe A and B both succeed -> Sentinel not attached/enforced for that prefix.
+- Probe A and B both fail with `403 key:write` -> ACL is blocking before Sentinel.
+
 ### Issue: key:write denied on valid AIT-001 path
 
 ```bash

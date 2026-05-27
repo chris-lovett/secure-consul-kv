@@ -181,6 +181,38 @@ consul acl token read -self -token=<team-token> -namespace=ait-001
 consul acl token read -self -token=<team-token> -namespace=ait-001 -expanded
 ```
 
+### ACL vs Sentinel: how to tell what failed
+
+Use message signatures first:
+
+- ACL denial: HTTP `403` and message contains `lacks permission 'key:write'`.
+- Sentinel denial: token has confirmed `key:write` for path, clean write succeeds, policy-violating write fails (often surfaces as HTTP `500`).
+
+Run this probe pair with the same token:
+
+```bash
+# Probe A (clean payload): should succeed when ACL is correct
+consul kv put \
+  -token=<team-token> \
+  -namespace=ait-001 \
+  AIT-001/config/probe-ok \
+  '{"ok":true}'
+
+# Probe B (policy-violating payload): should fail only when Sentinel is enforcing
+consul kv put \
+  -token=<team-token> \
+  -namespace=ait-001 \
+  AIT-001/secrets/probe-bad \
+  '{"access_key":"AKIAIOSFODNN7EXAMPLE"}'
+```
+
+Interpretation:
+
+- A fails with `403 key:write` -> ACL problem.
+- A succeeds and B fails -> Sentinel is enforcing as expected.
+- A and B both succeed -> Sentinel not attached/enforced for that prefix.
+- A and B both fail with `403 key:write` -> ACL is blocking before Sentinel.
+
 ---
 
 ## Adding Sentinel rules for another team
