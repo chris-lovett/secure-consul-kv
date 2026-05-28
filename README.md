@@ -1,6 +1,6 @@
 # Secure Consul KV — Sentinel Policy Quickstart
 
-This repo shows how to lock down Consul KV writes using **ACL policies with embedded Sentinel rules**. You will write a policy, apply it, and prove enforcement in under 10 minutes.
+This repo shows how to lock down Consul KV writes using **ACL policies with embedded Sentinel rules**. You will write a policy, apply it, and prove enforcement.
 
 ---
 
