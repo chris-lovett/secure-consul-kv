@@ -5,7 +5,7 @@
 # Usage: ./test-kv-access.sh <TEAM_ID> <TOKEN>
 # Example: ./test-kv-access.sh AIT-001 abcdef12-3456-7890-abcd-ef1234567890
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -24,6 +24,16 @@ fi
 
 TEAM_ID="$1"
 TOKEN="$2"
+PASSED=0
+FAILED=0
+
+mark_pass() {
+    ((PASSED++))
+}
+
+mark_fail() {
+    ((FAILED++))
+}
 
 # Check prerequisites
 if ! command -v consul &> /dev/null; then
@@ -45,8 +55,10 @@ echo ""
 echo -e "${YELLOW}Test 1: Verifying token validity...${NC}"
 if consul acl token read -id "$TOKEN" > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Token is valid${NC}"
+    mark_pass
 else
     echo -e "${RED}✗ Token is invalid or expired${NC}"
+    mark_fail
     exit 1
 fi
 echo ""
@@ -62,9 +74,11 @@ if consul kv put \
     "$TEST_KEY" \
     "$TEST_VALUE" > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Write access: OK${NC}"
+    mark_pass
 else
     echo -e "${RED}✗ Write access: FAILED${NC}"
     echo -e "${RED}  Cannot write to ${TEST_KEY}${NC}"
+    mark_fail
 fi
 echo ""
 
@@ -77,14 +91,17 @@ if RESULT=$(consul kv get \
     if [ "$RESULT" = "$TEST_VALUE" ]; then
         echo -e "${GREEN}✓ Read access: OK${NC}"
         echo -e "${GREEN}  Value matches: $RESULT${NC}"
+        mark_pass
     else
         echo -e "${YELLOW}⚠ Read access: OK but value mismatch${NC}"
         echo -e "${YELLOW}  Expected: $TEST_VALUE${NC}"
         echo -e "${YELLOW}  Got: $RESULT${NC}"
+        mark_fail
     fi
 else
     echo -e "${RED}✗ Read access: FAILED${NC}"
     echo -e "${RED}  Cannot read from ${TEST_KEY}${NC}"
+    mark_fail
 fi
 echo ""
 
@@ -98,8 +115,10 @@ if consul kv get \
     echo -e "${GREEN}✓ List access: OK${NC}"
     KEY_COUNT=$(consul kv get -token="$TOKEN" -namespace="$TEAM_ID" -keys "${TEAM_ID}/" | wc -l)
     echo -e "${GREEN}  Found $KEY_COUNT keys${NC}"
+    mark_pass
 else
     echo -e "${RED}✗ List access: FAILED${NC}"
+    mark_fail
 fi
 echo ""
 
@@ -117,9 +136,11 @@ if consul kv put \
     "test" > /dev/null 2>&1; then
     echo -e "${RED}✗ Cross-namespace isolation: FAILED${NC}"
     echo -e "${RED}  Token can write to other namespaces (security issue!)${NC}"
+    mark_fail
 else
     echo -e "${GREEN}✓ Cross-namespace isolation: OK${NC}"
     echo -e "${GREEN}  Token correctly denied access to namespace: $OTHER_NAMESPACE${NC}"
+    mark_pass
 fi
 echo ""
 
@@ -137,9 +158,11 @@ if consul kv put \
     "test" > /dev/null 2>&1; then
     echo -e "${RED}✗ Cross-team isolation: FAILED${NC}"
     echo -e "${RED}  Token can write to other team prefixes (security issue!)${NC}"
+    mark_fail
 else
     echo -e "${GREEN}✓ Cross-team isolation: OK${NC}"
     echo -e "${GREEN}  Token correctly denied access to prefix: ${OTHER_TEAM}/${NC}"
+    mark_pass
 fi
 echo ""
 
@@ -150,8 +173,10 @@ if consul kv delete \
     -namespace="$TEAM_ID" \
     "$TEST_KEY" > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Delete access: OK${NC}"
+    mark_pass
 else
     echo -e "${RED}✗ Delete access: FAILED${NC}"
+    mark_fail
 fi
 echo ""
 
@@ -163,9 +188,19 @@ echo ""
 echo -e "Team ID:       $TEAM_ID"
 echo -e "Namespace:     $TEAM_ID"
 echo -e "Token:         ${TOKEN:0:8}...${TOKEN: -8}"
+echo -e "${GREEN}Passed:        $PASSED${NC}"
+echo -e "${RED}Failed:        $FAILED${NC}"
 echo ""
-echo -e "${GREEN}All tests completed!${NC}"
+if [ "$FAILED" -eq 0 ]; then
+    echo -e "${GREEN}All ACL namespace/path tests passed.${NC}"
+    echo ""
+    echo -e "${YELLOW}Note: This script validates ACL and namespace enforcement only.${NC}"
+    exit 0
+fi
+
+echo -e "${RED}One or more ACL namespace/path tests failed.${NC}"
 echo ""
 echo -e "${YELLOW}Note: This script validates ACL and namespace enforcement only.${NC}"
+exit 1
 
 # Made with Bob

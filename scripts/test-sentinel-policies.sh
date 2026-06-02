@@ -7,7 +7,7 @@
 # Usage: ./test-sentinel-policies.sh <TEAM_ID> <TOKEN>
 # Example: ./test-sentinel-policies.sh AIT-001 <token-secret-id>
 
-set -e
+set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -37,42 +37,103 @@ fi
 PASSED=0
 FAILED=0
 
+contains_acl_denial() {
+	local msg="$1"
+	local lowered
+	lowered=$(echo "$msg" | tr '[:upper:]' '[:lower:]')
+
+	if [[ "$lowered" == *"permission denied"* ]] || \
+		[[ "$lowered" == *"lacks permission"* ]] || \
+		[[ "$lowered" == *"http 403"* ]] || \
+		[[ "$lowered" == *"403 forbidden"* ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+kv_put_capture() {
+	local key="$1"
+	local value="$2"
+
+	set +e
+	KV_LAST_OUTPUT=$(consul kv put -token="$TOKEN" -namespace="$TEAM_ID" "$key" "$value" 2>&1)
+	KV_LAST_RC=$?
+	set -e
+}
+
+cleanup_key() {
+	local key="$1"
+	consul kv delete -token="$TOKEN" -namespace="$TEAM_ID" "$key" >/dev/null 2>&1 || true
+}
+
+# For expected Sentinel denials we first validate ACL path access with a clean payload
+# on the same key. This prevents ACL denials from being counted as Sentinel passes.
+run_expected_sentinel_deny_case() {
+	local name="$1"
+	local key="$2"
+	local violating_value="$3"
+	local clean_value='{"sentinel_probe":"ok"}'
+
+	echo -e "${YELLOW}${name}${NC}"
+
+	kv_put_capture "$key" "$clean_value"
+	if [ "$KV_LAST_RC" -ne 0 ]; then
+		echo -e "${RED}✗ FAILED: ACL or path setup blocked clean probe (cannot prove Sentinel)${NC}"
+		echo -e "${RED}  Probe output: ${KV_LAST_OUTPUT}${NC}"
+		((FAILED++))
+		echo ""
+		return
+	fi
+	cleanup_key "$key"
+
+	kv_put_capture "$key" "$violating_value"
+	if [ "$KV_LAST_RC" -eq 0 ]; then
+		echo -e "${RED}✗ FAILED: violating payload was allowed${NC}"
+		cleanup_key "$key"
+		((FAILED++))
+		echo ""
+		return
+	fi
+
+	if contains_acl_denial "$KV_LAST_OUTPUT"; then
+		echo -e "${RED}✗ FAILED: denial looked like ACL, not Sentinel${NC}"
+		echo -e "${RED}  Output: ${KV_LAST_OUTPUT}${NC}"
+		((FAILED++))
+	else
+		echo -e "${GREEN}✓ PASSED: clean probe allowed, violating payload denied (Sentinel enforcing)${NC}"
+		((PASSED++))
+	fi
+
+	echo ""
+}
+
+run_expected_allow_case() {
+	local name="$1"
+	local key="$2"
+	local value="$3"
+
+	echo -e "${YELLOW}${name}${NC}"
+
+	kv_put_capture "$key" "$value"
+	if [ "$KV_LAST_RC" -eq 0 ]; then
+		echo -e "${GREEN}✓ PASSED: write allowed${NC}"
+		((PASSED++))
+		cleanup_key "$key"
+	else
+		echo -e "${RED}✗ FAILED: write denied but should be allowed${NC}"
+		echo -e "${RED}  Output: ${KV_LAST_OUTPUT}${NC}"
+		((FAILED++))
+	fi
+
+	echo ""
+}
+
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Testing Sentinel Policy Enforcement${NC}"
 echo -e "${BLUE}Team: ${TEAM_ID}${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
-
-run_case() {
-	local name="$1"
-	local key="$2"
-	local value="$3"
-	local expect_deny="$4"
-
-	echo -e "${YELLOW}${name}${NC}"
-
-	if consul kv put -token="$TOKEN" -namespace="$TEAM_ID" "$key" "$value" >/dev/null 2>&1; then
-		if [ "$expect_deny" = "yes" ]; then
-			echo -e "${RED}✗ FAILED: write succeeded but should be denied${NC}"
-			((FAILED++))
-			consul kv delete -token="$TOKEN" -namespace="$TEAM_ID" "$key" >/dev/null 2>&1 || true
-		else
-			echo -e "${GREEN}✓ PASSED: write allowed${NC}"
-			((PASSED++))
-			consul kv delete -token="$TOKEN" -namespace="$TEAM_ID" "$key" >/dev/null 2>&1 || true
-		fi
-	else
-		if [ "$expect_deny" = "yes" ]; then
-			echo -e "${GREEN}✓ PASSED: write denied${NC}"
-			((PASSED++))
-		else
-			echo -e "${RED}✗ FAILED: write denied but should be allowed${NC}"
-			((FAILED++))
-		fi
-	fi
-
-	echo ""
-}
 
 # ---------------------------------------------------------------------------
 # Section 1: Baseline prefix  (TEAM_ID/)
@@ -81,31 +142,23 @@ run_case() {
 echo -e "${BLUE}--- Section 1: Baseline prefix (${TEAM_ID}/) ---${NC}"
 echo ""
 
-run_case "Test 1: AWS key pattern blocked at baseline prefix" \
+run_expected_sentinel_deny_case "Test 1: AWS key pattern blocked at baseline prefix" \
 	"${TEAM_ID}/test/sentinel/aws" \
-	'{"aws_access_key":"AKIAIOSFODNN7EXAMPLE"}' \
-	"yes"
+	'{"aws_access_key":"AKIAIOSFODNN7EXAMPLE"}'
 
-run_case "Test 2: Password field blocked at baseline prefix" \
+run_expected_sentinel_deny_case "Test 2: Password field blocked at baseline prefix" \
 	"${TEAM_ID}/test/sentinel/password" \
-	'{"password":"super-secret"}' \
-	"yes"
+	'{"password":"super-secret"}'
 
-run_case "Test 3: Valid business config allowed at baseline prefix" \
+run_expected_allow_case "Test 3: Valid business config allowed at baseline prefix" \
 	"${TEAM_ID}/test/sentinel/valid" \
-	'{"environment":"prod","port":8080}' \
-	"no"
+	'{"environment":"prod","port":8080}'
 
 echo -e "${YELLOW}Test 4: Oversized payload (>512 KB) blocked at baseline prefix${NC}"
 LARGE_VALUE=$(dd if=/dev/zero bs=1024 count=600 2>/dev/null | base64)
-if consul kv put -token="$TOKEN" -namespace="$TEAM_ID" "${TEAM_ID}/test/sentinel/oversize" "$LARGE_VALUE" >/dev/null 2>&1; then
-	echo -e "${RED}✗ FAILED: oversized payload was allowed${NC}"
-	((FAILED++))
-	consul kv delete -token="$TOKEN" -namespace="$TEAM_ID" "${TEAM_ID}/test/sentinel/oversize" >/dev/null 2>&1 || true
-else
-	echo -e "${GREEN}✓ PASSED: oversized payload denied${NC}"
-	((PASSED++))
-fi
+run_expected_sentinel_deny_case "Test 4: Oversized payload (>512 KB) blocked at baseline prefix" \
+	"${TEAM_ID}/test/sentinel/oversize" \
+	"$LARGE_VALUE"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -117,37 +170,28 @@ echo ""
 echo -e "${BLUE}--- Section 2: secrets/ sub-prefix (${TEAM_ID}/secrets/) ---${NC}"
 echo ""
 
-run_case "Test 5: Vault service token blocked under secrets/" \
+run_expected_sentinel_deny_case "Test 5: Vault service token blocked under secrets/" \
 	"${TEAM_ID}/secrets/vault-token" \
-	"hvs.AQICAHiMQhZgMwaaaExampleVaultToken1234567890" \
-	"yes"
+	"hvs.AQICAHiMQhZgMwaaaExampleVaultToken1234567890"
 
-run_case "Test 6: GitHub PAT blocked under secrets/" \
+run_expected_sentinel_deny_case "Test 6: GitHub PAT blocked under secrets/" \
 	"${TEAM_ID}/secrets/gh-token" \
-	"ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890ab" \
-	"yes"
+	"ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ1234567890ab"
 
-run_case "Test 7: DB connection string blocked under secrets/" \
+run_expected_sentinel_deny_case "Test 7: DB connection string blocked under secrets/" \
 	"${TEAM_ID}/secrets/db-url" \
-	"postgres://appuser:hunter2@db.example.com:5432/mydb" \
-	"yes"
+	"postgres://appuser:hunter2@db.example.com:5432/mydb"
 
 echo -e "${YELLOW}Test 8: Payload >64 KB blocked under secrets/ (stricter size cap)${NC}"
 MEDIUM_VALUE=$(dd if=/dev/zero bs=1024 count=70 2>/dev/null | base64)
-if consul kv put -token="$TOKEN" -namespace="$TEAM_ID" "${TEAM_ID}/secrets/oversize" "$MEDIUM_VALUE" >/dev/null 2>&1; then
-	echo -e "${RED}✗ FAILED: >64 KB payload was allowed under secrets/${NC}"
-	((FAILED++))
-	consul kv delete -token="$TOKEN" -namespace="$TEAM_ID" "${TEAM_ID}/secrets/oversize" >/dev/null 2>&1 || true
-else
-	echo -e "${GREEN}✓ PASSED: >64 KB payload denied under secrets/${NC}"
-	((PASSED++))
-fi
+run_expected_sentinel_deny_case "Test 8: Payload >64 KB blocked under secrets/ (stricter size cap)" \
+	"${TEAM_ID}/secrets/oversize" \
+	"$MEDIUM_VALUE"
 echo ""
 
-run_case "Test 9: Valid opaque secret reference allowed under secrets/" \
+run_expected_allow_case "Test 9: Valid opaque secret reference allowed under secrets/" \
 	"${TEAM_ID}/secrets/api-ref" \
-	"vault:secret/data/ait-001/api-key" \
-	"no"
+	"vault:secret/data/ait-001/api-key"
 
 # ---------------------------------------------------------------------------
 # Section 3: config/ sub-prefix  (TEAM_ID/config/)
@@ -157,20 +201,17 @@ run_case "Test 9: Valid opaque secret reference allowed under secrets/" \
 echo -e "${BLUE}--- Section 3: config/ sub-prefix (${TEAM_ID}/config/) ---${NC}"
 echo ""
 
-run_case "Test 10: AWS key blocked under config/" \
+run_expected_sentinel_deny_case "Test 10: AWS key blocked under config/" \
 	"${TEAM_ID}/config/app-settings" \
-	'{"region":"us-east-1","access_key":"AKIAIOSFODNN7EXAMPLE"}' \
-	"yes"
+	'{"region":"us-east-1","access_key":"AKIAIOSFODNN7EXAMPLE"}'
 
-run_case "Test 11: Inline password blocked under config/" \
+run_expected_sentinel_deny_case "Test 11: Inline password blocked under config/" \
 	"${TEAM_ID}/config/db-settings" \
-	'{"host":"db.example.com","password":"hunter2"}' \
-	"yes"
+	'{"host":"db.example.com","password":"hunter2"}'
 
-run_case "Test 12: Valid app configuration allowed under config/" \
+run_expected_allow_case "Test 12: Valid app configuration allowed under config/" \
 	"${TEAM_ID}/config/feature-flags" \
-	'{"dark_mode":true,"max_retries":3,"timeout_ms":5000}' \
-	"no"
+	'{"dark_mode":true,"max_retries":3,"timeout_ms":5000}'
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Sentinel Test Summary (12 tests)${NC}"
@@ -187,5 +228,5 @@ if [ $FAILED -eq 0 ]; then
 fi
 
 echo -e "${RED}Some Sentinel tests failed.${NC}"
-echo -e "${YELLOW}Check ACL policy sentinel stanzas and enforcement levels.${NC}"
+echo -e "${YELLOW}Check ACL policy sentinel stanzas, token permissions, and enforcement levels.${NC}"
 exit 1
