@@ -21,6 +21,8 @@
 #   soft-mandatory  — blocks the write; a Consul operator can override
 #   hard-mandatory  — blocks the write unconditionally
 
+namespace "AIT-XXX" {
+
   # ---------------------------------------------------------------------------
   # Sub-prefix: AIT-XXX/secrets/
   # Strictest enforcement. Secrets should be small opaque references or
@@ -154,3 +156,4 @@ EOF
   
   # NOTE: No catch-all deny rule is needed. Consul ACL defaults to deny for
   # any path not explicitly granted, and explicit deny rules take precedence.
+}
