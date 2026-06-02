@@ -96,14 +96,12 @@ run_expected_sentinel_deny_case() {
 		return
 	fi
 
-	if contains_acl_denial "$KV_LAST_OUTPUT"; then
-		echo -e "${RED}✗ FAILED: denial looked like ACL, not Sentinel${NC}"
-		echo -e "${RED}  Output: ${KV_LAST_OUTPUT}${NC}"
-		((FAILED++))
-	else
-		echo -e "${GREEN}✓ PASSED: clean probe allowed, violating payload denied (Sentinel enforcing)${NC}"
-		((PASSED++))
-	fi
+	# Clean probe passed → ACL is proven correct for this path.
+	# Any denial of the violating payload is therefore Sentinel, not ACL.
+	# (Both produce identical "lacks permission 'key:write'" messages; the
+	# clean-probe-first pattern is the only reliable distinguishing mechanism.)
+	echo -e "${GREEN}✓ PASSED: clean probe allowed, violating payload denied (Sentinel enforcing)${NC}"
+	((PASSED++))
 
 	echo ""
 }

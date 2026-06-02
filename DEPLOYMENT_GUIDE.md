@@ -266,9 +266,8 @@ consul acl policy create \
 ### Review Policy Files
 
 ```bash
-# Review Sentinel policy examples and test data:
+# Review Sentinel policy examples:
 ls -1 sentinel-policies/
-ls -1 sentinel-policies/test-cases/
 ```
 
 ## Phase 5: Test Configuration (15 minutes)
@@ -534,7 +533,7 @@ consul acl policy read -name "ait-001-kv-policy" -namespace "AIT-001"
 Use failure signatures first:
 
 - ACL denial: HTTP `403` with `lacks permission 'key:write'`.
-- Sentinel denial: token has `key:write`, clean payload succeeds, violating payload fails (often HTTP `500`).
+- Sentinel denial: token has `key:write`, clean payload succeeds, violating payload fails (HTTP `403` — same status code as an ACL denial).
 
 Run this probe pair with the same token:
 

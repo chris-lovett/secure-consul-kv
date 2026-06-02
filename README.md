@@ -161,7 +161,7 @@ consul kv put \
   '{"access_key":"AKIAIOSFODNN7EXAMPLE"}'
 ```
 
-The second command should be denied (typically surfaced as HTTP 500 from the KV API because Sentinel blocked the write).
+The second command should be denied (surfaced as HTTP 403 — the same status code as an ACL denial; use the probe-pair technique in the troubleshooting section below to confirm Sentinel is the cause).
 
 ### Step 8 — Run full Sentinel test suite
 
@@ -186,7 +186,7 @@ consul acl token read -expanded -accessor-id=<token-accessor-id> -namespace=ait-
 Use message signatures first:
 
 - ACL denial: HTTP `403` and message contains `lacks permission 'key:write'`.
-- Sentinel denial: token has confirmed `key:write` for path, clean write succeeds, policy-violating write fails (often surfaces as HTTP `500`).
+- Sentinel denial: token has confirmed `key:write` for path, clean write succeeds, policy-violating write fails (HTTP `403` — same status as an ACL denial; see probe pair below).
 
 Run this probe pair with the same token:
 
