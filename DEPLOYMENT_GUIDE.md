@@ -33,7 +33,7 @@ consul namespace create -name AIT-001 -description "Namespace for team AIT-001"
 consul acl policy create \
   -name "ait-001-kv-policy" \
   -namespace "AIT-001" \
-  -rules 'namespace "AIT-001" { key_prefix "AIT-001/" { policy = "write" } }'
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
 
 # 3) Team token
 consul acl token create \
@@ -51,7 +51,7 @@ consul acl policy update \
   -namespace "AIT-001" \
   -rules @acl-policies/ait-001-kv-policy.hcl
 
-# 6) Verify rules are present (must show namespace + key_prefix + sentinel blocks)
+# 6) Verify rules are present (must show key_prefix + sentinel blocks)
 consul acl policy read -name "ait-001-kv-policy" -namespace "AIT-001"
 
 # 7) Validate Sentinel behavior (manual + automated)
@@ -165,7 +165,7 @@ consul acl policy create \
   -name "ait-001-kv-policy" \
   -description "KV access policy for team AIT-001" \
   -namespace "AIT-001" \
-  -rules 'namespace "AIT-001" { key_prefix "AIT-001/" { policy = "write" } }'
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
 
 # Then enable Sentinel rules by updating from file
 consul acl policy update \
@@ -576,7 +576,7 @@ consul acl policy read -name "ait-001-kv-policy" -namespace "AIT-001"
 
 # If needed, reset to baseline write-only policy and re-test before Sentinel
 consul acl policy update -name "ait-001-kv-policy" -namespace "AIT-001" \
-  -rules 'namespace "AIT-001" { key_prefix "AIT-001/" { policy = "write" } }'
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
 ```
 
 ### Issue: VM Cannot Connect

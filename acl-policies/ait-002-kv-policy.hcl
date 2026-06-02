@@ -16,8 +16,6 @@
 #   value (string) — the value being stored
 #   flags (int)    — the optional KV flags integer
 
-namespace "ait-002" {
-
   # ---------------------------------------------------------------------------
   # Sub-prefix: AIT-002/secrets/
   # Strictest enforcement. Secrets should be small opaque references or
@@ -151,4 +149,3 @@ EOF
   
   # NOTE: No catch-all deny rule is needed. Consul ACL defaults to deny for
   # any path not explicitly granted, and explicit deny rules take precedence.
-}

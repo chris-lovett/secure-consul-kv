@@ -9,12 +9,11 @@ This repo shows how to lock down Consul KV writes using **ACL policies with embe
 Sentinel code lives inside the same HCL file as your ACL rules — nested directly in the `key_prefix` stanza for the path you want to guard. There is no separate command to upload or register it; the policy file is the single source of truth for both who can write **and** what they are allowed to write.
 
 ```hcl
-namespace "ait-001" {
-  key_prefix "AIT-001/secrets/" {  # ← ACL rule: who can write to this path
-    policy = "write"
+key_prefix "AIT-001/secrets/" {  # ← ACL rule: who can write to this path
+  policy = "write"
 
-    sentinel {                      # ← Sentinel block: what they are allowed to write
-      code = <<EOF
+  sentinel {                      # ← Sentinel block: what they are allowed to write
+    code = <<EOF
 import "strings"
 
 no_aws_keys = rule { not strings.contains(value, "AKIA") }
@@ -22,8 +21,7 @@ no_passwords = rule { not strings.contains(value, "password=") }
 
 main = rule { no_aws_keys and no_passwords }
 EOF
-      enforcementlevel = "hard-mandatory"  # write is blocked unconditionally if main = false
-    }
+    enforcementlevel = "hard-mandatory"  # write is blocked unconditionally if main = false
   }
 }
 ```
@@ -87,7 +85,7 @@ Start with a minimal policy to prove ACL wiring before adding Sentinel complexit
 consul acl policy create \
   -name ait-001-kv-policy \
   -namespace ait-001 \
-  -rules 'namespace "ait-001" { key_prefix "AIT-001/" { policy = "write" } }'
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
 ```
 
 If policy already exists:
@@ -96,7 +94,7 @@ If policy already exists:
 consul acl policy update \
   -name ait-001-kv-policy \
   -namespace ait-001 \
-  -rules 'namespace "ait-001" { key_prefix "AIT-001/" { policy = "write" } }'
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
 ```
 
 ### Step 4 — Create a team token
@@ -139,7 +137,7 @@ consul acl policy read \
   -namespace ait-001
 ```
 
-You should see a top-level `namespace "ait-001"` block containing `key_prefix "AIT-001/secrets/"`, `key_prefix "AIT-001/config/"`, and `key_prefix "AIT-001/"` with `sentinel { ... }` stanzas.
+You should see `key_prefix "AIT-001/secrets/"`, `key_prefix "AIT-001/config/"`, and `key_prefix "AIT-001/"` blocks with `sentinel { ... }` stanzas.
 
 ### Step 7 — Prove Sentinel enforcement
 
