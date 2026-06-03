@@ -136,7 +136,8 @@ main = rule {
   length(value) <= 524288 and
   not ("AKIA" in value) and
   not ("BEGIN RSA PRIVATE KEY" in value) and
-  not ("password=" in value)
+  not ("password=" in value) and
+  not ("\"password\":" in value)
 }
 EOF
       enforcementlevel = "hard-mandatory"
