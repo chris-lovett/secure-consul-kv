@@ -1,18 +1,18 @@
 # Secure Consul KV — Sentinel Policy Quickstart
 
-This repo shows how to lock down Consul KV writes using **ACL policies with embedded Sentinel rules**. You will write a policy, apply it, and prove enforcement.
+Lock down Consul KV writes using **ACL policies with embedded Sentinel rules**. Follow the steps below to create a team namespace, apply tiered enforcement, and prove it works end-to-end.
 
 ---
 
-## How Sentinel fits inside an ACL policy
+## How it works
 
-Sentinel code lives inside the same HCL file as your ACL rules — nested directly in the `key_prefix` stanza for the path you want to guard. There is no separate command to upload or register it; the policy file is the single source of truth for both who can write **and** what they are allowed to write.
+Sentinel code lives inside the same HCL file as your ACL rules — nested in the `key_prefix` stanza for the path you want to guard. The policy file is the single source of truth for both **who can write** and **what they are allowed to write**.
 
 ```hcl
-key_prefix "AIT-001/secrets/" {  # ← ACL rule: who can write to this path
+key_prefix "AIT-001/secrets/" {
   policy = "write"
 
-  sentinel {                      # ← Sentinel block: what they are allowed to write
+  sentinel {
     code = <<EOF
 import "strings"
 
@@ -21,12 +21,12 @@ no_passwords = rule { not strings.contains(value, "password=") }
 
 main = rule { no_aws_keys and no_passwords }
 EOF
-    enforcementlevel = "hard-mandatory"  # write is blocked unconditionally if main = false
+    enforcementlevel = "hard-mandatory"
   }
 }
 ```
 
-**Three injected variables** are available inside every `sentinel { code }` block:
+**Variables injected into every `sentinel { code }` block:**
 
 | Variable | Type   | Description                                      |
 |----------|--------|--------------------------------------------------|
@@ -46,40 +46,38 @@ EOF
 
 ## Prerequisites
 
-- Consul Enterprise 1.16+ with ACLs enabled
-- Admin token: `export CONSUL_HTTP_TOKEN=<admin-token>`
-- Cluster address: `export CONSUL_HTTP_ADDR=https://<your-consul>:8501`
-- Consul CLI installed and reachable
-
----
-
-## End-to-end demo
-
-All commands below use namespace `ait-001` and key path prefix `AIT-001/`.
-
-### Step 1 — Preflight environment
+- Consul Enterprise 1.16+ with ACLs enabled (`default_policy = "deny"`)
+- Admin (management) token
+- Consul CLI installed
 
 ```bash
-echo "$CONSUL_HTTP_ADDR"
-echo "${CONSUL_HTTP_TOKEN:+TOKEN_SET}"
+export CONSUL_HTTP_ADDR="https://<your-consul-addr>:8501"
+export CONSUL_HTTP_TOKEN="<admin-token>"
+
+# Verify connectivity and admin auth
+consul members
 consul acl token read -self
 ```
 
-If `consul acl token read -self` fails, fix admin auth first.
+If either command fails, fix your environment variables before continuing.
 
-### Step 2 — Create the namespace
+---
+
+## Step 1 — Create the team namespace
 
 ```bash
 consul namespace create \
   -name ait-001 \
-  -description "Team ait-001 namespace"
+  -description "Namespace for team AIT-001"
 ```
 
-If it already exists, continue.
+If the namespace already exists, continue to Step 2.
 
-### Step 3 — Create a known-good ACL baseline policy
+---
 
-Start with a minimal policy to prove ACL wiring before adding Sentinel complexity.
+## Step 2 — Create a baseline ACL policy (no Sentinel yet)
+
+Start with a minimal write rule to confirm ACL wiring works before introducing Sentinel.
 
 ```bash
 consul acl policy create \
@@ -88,7 +86,7 @@ consul acl policy create \
   -rules 'key_prefix "AIT-001/" { policy = "write" }'
 ```
 
-If policy already exists:
+If the policy already exists, update it back to the baseline:
 
 ```bash
 consul acl policy update \
@@ -97,30 +95,42 @@ consul acl policy update \
   -rules 'key_prefix "AIT-001/" { policy = "write" }'
 ```
 
-### Step 4 — Create a team token
+---
+
+## Step 3 — Create a team token
 
 ```bash
 consul acl token create \
-  -description "KV access token for team ait-001" \
+  -description "KV access token for team AIT-001" \
   -policy-name ait-001-kv-policy \
   -namespace ait-001
 ```
 
-Save the `SecretID` as `<team-token>`.
+Save the `SecretID` from the output — this is your team token for all commands below.
 
-### Step 5 — Prove ACL write works (no Sentinel yet)
+```bash
+export TEAM_TOKEN="<SecretID from above>"
+```
+
+---
+
+## Step 4 — Confirm ACL write works
 
 ```bash
 consul kv put \
-  -token=<team-token> \
+  -token="$TEAM_TOKEN" \
   -namespace=ait-001 \
-  "AIT-001/config/app-mode" \
-  '{"environment":"prod","port":8080}'
+  AIT-001/config/probe-ok \
+  '{"ok":true}'
 ```
 
-Expected result: success.
+Expected: `Success! Data written to: AIT-001/config/probe-ok`
 
-### Step 6 — Apply full Sentinel-enabled policy from file
+If this fails with `403 key:write`, the ACL is not wired correctly. Do not continue to Sentinel until this succeeds — see [Troubleshooting](#troubleshooting).
+
+---
+
+## Step 5 — Apply the full Sentinel-enabled policy
 
 ```bash
 consul acl policy update \
@@ -129,7 +139,9 @@ consul acl policy update \
   -rules @acl-policies/ait-001-kv-policy.hcl
 ```
 
-Immediately verify rules are present:
+> **Run this from the repo root** so the `@` file path resolves correctly.
+
+Verify the rules were applied — you should see `key_prefix "AIT-001/secrets/"`, `key_prefix "AIT-001/config/"`, and `key_prefix "AIT-001/"` blocks each with a `sentinel { ... }` stanza:
 
 ```bash
 consul acl policy read \
@@ -137,81 +149,113 @@ consul acl policy read \
   -namespace ait-001
 ```
 
-You should see `key_prefix "AIT-001/secrets/"`, `key_prefix "AIT-001/config/"`, and `key_prefix "AIT-001/"` blocks with `sentinel { ... }` stanzas.
+---
 
-### Step 7 — Prove Sentinel enforcement
+## Step 6 — Verify Sentinel enforcement manually
 
-Positive write (should succeed):
+**Clean write (should succeed):**
 
 ```bash
 consul kv put \
-  -token=<team-token> \
+  -token="$TEAM_TOKEN" \
   -namespace=ait-001 \
-  "AIT-001/config/app-mode" \
+  AIT-001/config/app-settings \
   '{"environment":"prod","port":8080}'
 ```
 
-Negative write (should fail due to Sentinel):
+**Violating write (should be denied):**
 
 ```bash
 consul kv put \
-  -token=<team-token> \
+  -token="$TEAM_TOKEN" \
   -namespace=ait-001 \
-  "AIT-001/secrets/bad-key" \
+  AIT-001/secrets/bad-key \
   '{"access_key":"AKIAIOSFODNN7EXAMPLE"}'
 ```
 
-The second command should be denied (surfaced as HTTP 403 — the same status code as an ACL denial; use the probe-pair technique in the troubleshooting section below to confirm Sentinel is the cause).
+Expected: `403 Permission denied`. If both commands succeed, Sentinel is not being evaluated — check that the policy update in Step 5 persisted the `sentinel { }` stanzas.
 
-### Step 8 — Run full Sentinel test suite
+---
 
-```bash
-./scripts/test-sentinel-policies.sh ait-001 <team-token>
-```
-
-All tests should pass across baseline, `secrets/`, and `config/` sub-prefixes.
-
-### Troubleshooting quick checks
+## Step 7 — Run the automated test suite
 
 ```bash
-# Confirm token is in expected namespace and has expected policy
-consul acl token read -self -token=<team-token> -namespace=ait-001
-
-# If writes fail with key:write denied, inspect effective permissions
-consul acl token read -expanded -accessor-id=<token-accessor-id> -namespace=ait-001
+./scripts/test-sentinel-policies.sh AIT-001 "$TEAM_TOKEN"
 ```
+
+This runs 12 tests across three sections:
+
+| Section | Tests | What it checks |
+|---------|-------|----------------|
+| Baseline prefix (`AIT-001/`) | 4 | AWS keys, passwords, oversized payloads, valid writes |
+| `secrets/` sub-prefix | 5 | Vault tokens, GitHub PATs, DB connection strings, size cap, valid secret refs |
+| `config/` sub-prefix | 3 | AWS keys, inline passwords, valid config |
+
+Each deny-case first writes a clean `{"sentinel_probe":"ok"}` payload to confirm the ACL path works, then writes the violating payload and confirms it is blocked. This prevents ACL failures from being counted as Sentinel passes.
+
+To also validate namespace isolation between teams:
+
+```bash
+./scripts/test-kv-access.sh AIT-001 "$TEAM_TOKEN"
+```
+
+---
+
+## Troubleshooting
 
 ### ACL vs Sentinel: how to tell what failed
 
-Use message signatures first:
-
-- ACL denial: HTTP `403` and message contains `lacks permission 'key:write'`.
-- Sentinel denial: token has confirmed `key:write` for path, clean write succeeds, policy-violating write fails (HTTP `403` — same status as an ACL denial; see probe pair below).
-
-Run this probe pair with the same token:
+Both ACL denials and Sentinel denials return HTTP `403` with `lacks permission 'key:write'`. The only reliable way to distinguish them is the **probe pair**:
 
 ```bash
-# Probe A (clean payload): should succeed when ACL is correct
-consul kv put \
-  -token=<team-token> \
-  -namespace=ait-001 \
-  AIT-001/config/probe-ok \
-  '{"ok":true}'
+# Probe A — clean payload on the same key you care about
+consul kv put -token="$TEAM_TOKEN" -namespace=ait-001 \
+  AIT-001/config/probe-ok '{"ok":true}'
 
-# Probe B (policy-violating payload): should fail only when Sentinel is enforcing
-consul kv put \
-  -token=<team-token> \
-  -namespace=ait-001 \
-  AIT-001/secrets/probe-bad \
-  '{"access_key":"AKIAIOSFODNN7EXAMPLE"}'
+# Probe B — violating payload
+consul kv put -token="$TEAM_TOKEN" -namespace=ait-001 \
+  AIT-001/secrets/probe-bad '{"access_key":"AKIAIOSFODNN7EXAMPLE"}'
 ```
 
-Interpretation:
+| Result | Meaning |
+|--------|---------|
+| Probe A fails `403 key:write` | ACL problem — fix before touching Sentinel |
+| Probe A succeeds, Probe B fails | Sentinel is enforcing correctly |
+| Both succeed | Sentinel not attached to that prefix — check the policy was updated from file |
+| Both fail `403 key:write` | ACL is blocking before Sentinel evaluates |
 
-- A fails with `403 key:write` -> ACL problem.
-- A succeeds and B fails -> Sentinel is enforcing as expected.
-- A and B both succeed -> Sentinel not attached/enforced for that prefix.
-- A and B both fail with `403 key:write` -> ACL is blocking before Sentinel.
+### Diagnose a token
+
+```bash
+# Check which token is active and what policies it has
+consul acl token read -self -token="$TEAM_TOKEN" -namespace=ait-001
+
+# Expanded view: see the full merged effective rules
+ACCESSOR_ID=$(consul acl token read -self -token="$TEAM_TOKEN" -namespace=ait-001 -format=json | jq -r '.AccessorID')
+consul acl token read -expanded -accessor-id="$ACCESSOR_ID" -namespace=ait-001
+```
+
+The expanded output shows the actual `key_prefix` rules that will be evaluated. If `sentinel { }` stanzas are absent, the policy update from Step 5 did not apply correctly — re-run it.
+
+### Policy reads back correctly but Sentinel is still not enforcing
+
+Confirm you are running the update command from the repo root and the file exists:
+
+```bash
+pwd                                      # should be the repo root
+ls acl-policies/ait-001-kv-policy.hcl   # should exist
+```
+
+### Reset to ACL-only baseline
+
+```bash
+consul acl policy update \
+  -name ait-001-kv-policy \
+  -namespace ait-001 \
+  -rules 'key_prefix "AIT-001/" { policy = "write" }'
+```
+
+Removes all Sentinel stanzas and falls back to plain write access. Useful for isolating whether an issue is ACL or Sentinel.
 
 ---
 
@@ -252,4 +296,3 @@ Sentinel enforcement is activated the moment the policy is applied — no additi
 | `sentinel-policies/kv-size-limit.sentinel` | Reference size-limit rules |
 | `scripts/test-sentinel-policies.sh` | 12-test Sentinel validation suite |
 | `scripts/test-kv-access.sh` | ACL namespace/path isolation tests |
-| `DEPLOYMENT_GUIDE.md` | Full production rollout and troubleshooting guide |
