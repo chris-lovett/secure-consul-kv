@@ -35,15 +35,15 @@
 import "strings"
 
 no_aws_keys = rule {
-  not strings.contains(value, "AKIA") and
-  not strings.contains(value, "ASIA")
+  not ("AKIA" in value) and
+  not ("ASIA" in value)
 }
 
 no_private_keys = rule {
-  not strings.contains(value, "BEGIN RSA PRIVATE KEY") and
-  not strings.contains(value, "BEGIN EC PRIVATE KEY") and
-  not strings.contains(value, "BEGIN OPENSSH PRIVATE KEY") and
-  not strings.contains(value, "BEGIN PRIVATE KEY")
+  not ("BEGIN RSA PRIVATE KEY" in value) and
+  not ("BEGIN EC PRIVATE KEY" in value) and
+  not ("BEGIN OPENSSH PRIVATE KEY" in value) and
+  not ("BEGIN PRIVATE KEY" in value)
 }
 
 no_vault_tokens = rule {
@@ -57,17 +57,17 @@ no_github_tokens = rule {
 }
 
 no_passwords = rule {
-  not strings.contains(value, "password=") and
-  not strings.contains(value, "passwd=") and
-  not strings.contains(value, "\"password\":") and
-  not strings.contains(value, "'password':")
+  not ("password=" in value) and
+  not ("passwd=" in value) and
+  not ("\"password\":" in value) and
+  not ("'password':" in value)
 }
 
 no_db_connection_strings = rule {
-  not strings.contains(value, "postgres://") and
-  not strings.contains(value, "mysql://") and
-  not strings.contains(value, "mongodb://") and
-  not strings.contains(value, "mongodb+srv://")
+  not ("postgres://" in value) and
+  not ("mysql://" in value) and
+  not ("mongodb://" in value) and
+  not ("mongodb+srv://" in value)
 }
 
 # 64 KB ceiling — secrets should be references, not full blobs
@@ -98,21 +98,19 @@ EOF
 
     sentinel {
       code = <<EOF
-import "strings"
-
 no_aws_keys = rule {
-  not strings.contains(value, "AKIA") and
-  not strings.contains(value, "ASIA")
+  not ("AKIA" in value) and
+  not ("ASIA" in value)
 }
 
 no_private_keys = rule {
-  not strings.contains(value, "BEGIN RSA PRIVATE KEY") and
-  not strings.contains(value, "BEGIN PRIVATE KEY")
+  not ("BEGIN RSA PRIVATE KEY" in value) and
+  not ("BEGIN PRIVATE KEY" in value)
 }
 
 no_passwords = rule {
-  not strings.contains(value, "password=") and
-  not strings.contains(value, "\"password\":")
+  not ("password=" in value) and
+  not ("\"password\":" in value)
 }
 
 # 512 KB ceiling — consistent with Consul's default kv_max_value_size
@@ -139,13 +137,11 @@ EOF
 
     sentinel {
       code = <<EOF
-import "strings"
-
 main = rule {
   length(value) <= 524288 and
-  not strings.contains(value, "AKIA") and
-  not strings.contains(value, "BEGIN RSA PRIVATE KEY") and
-  not strings.contains(value, "password=")
+  not ("AKIA" in value) and
+  not ("BEGIN RSA PRIVATE KEY" in value) and
+  not ("password=" in value)
 }
 EOF
       enforcementlevel = "hard-mandatory"
